@@ -1,0 +1,36 @@
+name: promptforge
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: promptforge
+      POSTGRES_PASSWORD: promptforge
+      POSTGRES_DB: promptforge
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U promptforge -d promptforge"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  api:
+    build:
+      context: ../apps/api
+      dockerfile: Dockerfile
+    environment:
+      PF_DATABASE_URL: postgresql+asyncpg://promptforge:promptforge@postgres:5432/promptforge
+      PF_JWT_SECRET: dev-only-secret-please-replace-min-32-characters-long
+      PF_LOG_LEVEL: DEBUG
+      PF_CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
