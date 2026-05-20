@@ -1,0 +1,60 @@
+app = "promptforge-api"
+primary_region = "ord"
+kill_signal = "SIGINT"
+kill_timeout = 30
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PF_LOG_LEVEL = "INFO"
+
+# Uncomment once Alembic + seed script land in later phases
+# [deploy]
+#   release_command = "alembic upgrade head && python -m scripts.seed_demo --idempotent"
+
+[processes]
+  api    = "uvicorn promptforge_api.main:app --host 0.0.0.0 --port 8000"
+  worker = "python -m promptforge_api.workers.eval_worker"
+
+[[services]]
+  processes = ["api"]
+  internal_port = 8000
+  protocol = "tcp"
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+  [[services.http_checks]]
+    interval = "10s"
+    grace_period = "5s"
+    method = "get"
+    path = "/health"
+    protocol = "http"
+    timeout = "2s"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
+  processes = ["api"]
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
+  processes = ["worker"]
