@@ -2,23 +2,30 @@ FROM python:3.12-slim AS base
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
     UV_SYSTEM_PYTHON=1 \
-    UV_PROJECT_ENVIRONMENT=/usr/local
+    UV_LINK_MODE=copy
 
 WORKDIR /app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl -LsSf https://astral.sh/uv/install.sh | sh \
-    && mv /root/.local/bin/uv /usr/local/bin/uv
+    && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml ./
-RUN uv pip install --system -r <(uv pip compile pyproject.toml --no-header) \
-    || uv sync --frozen --no-dev || uv sync --no-dev
+COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /uvx /usr/local/bin/
 
+# Install only runtime deps for layer caching
+COPY pyproject.toml uv.lock* ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project || uv sync --no-dev --no-install-project
+
+# Copy the rest of the project and install it
 COPY promptforge_api ./promptforge_api
+COPY alembic ./alembic
+COPY alembic.ini ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev || uv sync --no-dev
+
+ENV PATH="/app/.venv/bin:${PATH}"
 
 EXPOSE 8000
 

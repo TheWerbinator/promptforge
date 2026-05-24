@@ -17,6 +17,19 @@ services:
       timeout: 2s
       retries: 10
 
+  api-migrate:
+    build:
+      context: ../apps/api
+      dockerfile: Dockerfile
+    environment:
+      PF_DATABASE_URL: postgresql+asyncpg://promptforge:promptforge@postgres:5432/promptforge
+      PF_JWT_SECRET: dev-only-secret-please-replace-min-32-characters-long
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build:
       context: ../apps/api
@@ -31,6 +44,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      api-migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:
