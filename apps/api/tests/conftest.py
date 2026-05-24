@@ -3,9 +3,30 @@
 `isolate_env` runs autouse so tests never see ambient env vars that could leak from
 the developer's shell. Tests opt in to specific env via the `base_env` fixture or by
 setting vars via `monkeypatch`.
+
+Integration tests use `pg_container` (session-scoped testcontainers Postgres) and
+`db_session` (per-test transactional rollback).
 """
 
+import os
+from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
+from typing import TYPE_CHECKING
+
 import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+if TYPE_CHECKING:
+    from testcontainers.postgres import PostgresContainer
+
+API_ROOT = Path(__file__).resolve().parent.parent
+ALEMBIC_INI = API_ROOT / "alembic.ini"
+ALEMBIC_DIR = API_ROOT / "alembic"
 
 
 @pytest.fixture(autouse=True)
@@ -31,3 +52,59 @@ def base_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "postgresql+asyncpg://test:test@localhost:5432/test",
     )
     monkeypatch.setenv("PF_JWT_SECRET", "a" * 48)
+
+
+# ----- Integration fixtures (testcontainers Postgres) ---------------------------------
+
+
+@pytest.fixture(scope="session")
+def pg_container() -> Iterator["PostgresContainer"]:
+    """Session-scoped Postgres container. Skipped if Docker is unavailable."""
+    pytest.importorskip("testcontainers.postgres")
+    from testcontainers.postgres import PostgresContainer
+
+    with PostgresContainer("postgres:16-alpine", driver="asyncpg") as container:
+        yield container
+
+
+@pytest.fixture(scope="session")
+def pg_url(pg_container: "PostgresContainer") -> str:
+    return pg_container.get_connection_url()
+
+
+@pytest.fixture(scope="session")
+def _migrated_engine(pg_url: str) -> None:
+    """Run Alembic migrations once per session against the container."""
+    from alembic.config import Config
+
+    from alembic import command
+
+    os.environ["PF_DATABASE_URL"] = pg_url
+    os.environ.setdefault("PF_JWT_SECRET", "a" * 48)
+
+    from promptforge_api.core.config import get_settings
+
+    get_settings.cache_clear()
+
+    cfg = Config(str(ALEMBIC_INI))
+    cfg.set_main_option("script_location", str(ALEMBIC_DIR))
+    command.upgrade(cfg, "head")
+
+
+@pytest_asyncio.fixture
+async def db_session(pg_url: str, _migrated_engine: None) -> AsyncIterator[AsyncSession]:
+    """Per-test session with rollback isolation. Each test sees a clean DB state."""
+    engine = create_async_engine(pg_url, future=True)
+    session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
+
+    async with engine.connect() as connection:
+        trans = await connection.begin()
+        session = session_factory(bind=connection)
+
+        try:
+            yield session
+        finally:
+            await session.close()
+            await trans.rollback()
+
+    await engine.dispose()
