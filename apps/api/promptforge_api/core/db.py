@@ -1,8 +1,11 @@
 """Async SQLAlchemy engine and session management.
 
-`engine` is process-wide. `AsyncSessionLocal` is the per-request session factory.
+The engine is lazy-initialized on first use so importing this module does not
+require `PF_DATABASE_URL` to be set (matters for test collection and CLI tools).
 `get_session` is the FastAPI dependency that yields a transactional session.
 """
+
+from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
@@ -14,6 +17,9 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from promptforge_api.core.config import get_settings
+
+_engine: AsyncEngine | None = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 def _build_engine() -> AsyncEngine:
@@ -27,18 +33,29 @@ def _build_engine() -> AsyncEngine:
     )
 
 
-engine: AsyncEngine = _build_engine()
-AsyncSessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
-    bind=engine,
-    expire_on_commit=False,
-    autoflush=False,
-    autocommit=False,
-)
+def get_engine() -> AsyncEngine:
+    global _engine, _session_factory
+    if _engine is None:
+        _engine = _build_engine()
+        _session_factory = async_sessionmaker(
+            bind=_engine,
+            expire_on_commit=False,
+            autoflush=False,
+            autocommit=False,
+        )
+    return _engine
+
+
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    get_engine()
+    assert _session_factory is not None
+    return _session_factory
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency: yields a session, commits on success, rolls back on error."""
-    async with AsyncSessionLocal() as session:
+    """FastAPI dependency: yield a session, commit on success, rollback on error."""
+    factory = get_session_factory()
+    async with factory() as session:
         try:
             yield session
             await session.commit()
@@ -48,5 +65,9 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 
 async def dispose_engine() -> None:
-    """Close the engine's pool. Used by tests and graceful shutdown."""
-    await engine.dispose()
+    """Dispose the cached engine. Used by tests and graceful shutdown."""
+    global _engine, _session_factory
+    if _engine is not None:
+        await _engine.dispose()
+    _engine = None
+    _session_factory = None

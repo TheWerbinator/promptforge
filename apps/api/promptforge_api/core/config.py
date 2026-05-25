@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 30
 
+    # When False, the refresh cookie is set without Secure (required for HTTP
+    # local dev and the in-process TestClient). Always True in deployed envs.
+    cookie_secure: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:
