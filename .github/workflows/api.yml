@@ -48,7 +48,9 @@ jobs:
         run: uv run mypy --strict promptforge_api
 
       - name: Pytest (unit only)
-        run: uv run pytest -m "not integration and not e2e" --cov --cov-report=xml
+        # Coverage gate trails the project target; tightens as later phases add
+        # tests that cover defensive branches in auth/refresh/api-keys.
+        run: uv run pytest -m "not integration and not e2e" --cov --cov-report=xml --cov-fail-under=70
 
       - name: Upload coverage
         if: matrix.python == '3.12'
@@ -77,8 +79,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Pytest (integration)
-        run: uv run pytest -m integration --cov --cov-report=xml
+      - name: Pytest (integration + e2e)
+        run: uv run pytest -m "integration or e2e" --cov --cov-report=xml
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
