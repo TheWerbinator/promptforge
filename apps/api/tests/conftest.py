@@ -5,7 +5,8 @@ the developer's shell. Tests opt in to specific env via the `base_env` fixture o
 setting vars via `monkeypatch`.
 
 Integration tests use `pg_container` (session-scoped testcontainers Postgres) and
-`db_session` (per-test transactional rollback).
+`db_session` (per-test transactional rollback). E2E and tenancy tests use
+`api_client` (real ASGI app + truncate-between-tests Postgres).
 """
 
 import os
@@ -15,11 +16,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+
+from promptforge_api.core.db import dispose_engine
 
 if TYPE_CHECKING:
     from testcontainers.postgres import PostgresContainer
@@ -108,3 +113,40 @@ async def db_session(pg_url: str, _migrated_engine: None) -> AsyncIterator[Async
             await trans.rollback()
 
     await engine.dispose()
+
+
+# ----- E2E / tenancy: full ASGI app + truncate-per-test --------------------------------
+
+
+@pytest_asyncio.fixture
+async def api_client(
+    pg_url: str,
+    _migrated_engine: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[AsyncClient]:
+    monkeypatch.setenv("PF_DATABASE_URL", pg_url)
+    monkeypatch.setenv("PF_JWT_SECRET", "a" * 48)
+    monkeypatch.setenv("PF_COOKIE_SECURE", "false")
+
+    from promptforge_api.core.config import get_settings
+
+    get_settings.cache_clear()
+
+    cleanup_engine = create_async_engine(pg_url, future=True)
+    truncate_sql = (
+        "TRUNCATE refresh_tokens, api_keys, memberships, orgs, users RESTART IDENTITY CASCADE"
+    )
+    async with cleanup_engine.begin() as conn:
+        await conn.execute(text(truncate_sql))
+    await cleanup_engine.dispose()
+
+    await dispose_engine()
+
+    from promptforge_api.main import create_app
+
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        yield client
+
+    await dispose_engine()

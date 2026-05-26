@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, TypeVar
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
@@ -20,6 +20,9 @@ from promptforge_api.core.security import (
     verify_api_key,
 )
 from promptforge_api.models import ApiKey, OrgRole
+from promptforge_api.models.base import Base
+
+T = TypeVar("T", bound=Base)
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -100,3 +103,30 @@ def require_role(
         return principal
 
     return _check
+
+
+def get_repo(
+    model: type[T],
+) -> Callable[..., Awaitable[TenantRepository[T]]]:
+    """Dependency factory: yields a TenantRepository scoped to the principal.
+
+    Imported lazily to avoid the import cycle between deps.py and
+    repositories/base.py (the repo imports Principal from here).
+    """
+
+    async def _dep(
+        principal: Principal = Depends(get_principal),
+        session: AsyncSession = Depends(get_session),
+    ) -> TenantRepository[T]:
+        from promptforge_api.repositories.base import TenantRepository
+
+        return TenantRepository(model, session, principal)
+
+    return _dep
+
+
+# TYPE_CHECKING-only re-export for the return annotation above.
+from typing import TYPE_CHECKING  # noqa: E402
+
+if TYPE_CHECKING:
+    from promptforge_api.repositories.base import TenantRepository
