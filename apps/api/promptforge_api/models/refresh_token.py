@@ -1,4 +1,8 @@
-"""RefreshToken — opaque, single-use, rotated; replay triggers chain revocation."""
+"""RefreshToken — opaque, single-use, rotated; replay triggers chain revocation.
+
+TODO(phase-13): add user_agent and ip_address columns for session forensics + a
+"sign me out everywhere" feature. Currently we revoke per-chain, not per-device.
+"""
 
 from datetime import datetime
 from uuid import UUID

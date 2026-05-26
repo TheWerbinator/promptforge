@@ -50,13 +50,7 @@ _INVALID_CREDENTIALS = HTTPException(
 )
 
 
-# --------------------------------------------------------------------------------------
-# Helpers
-# --------------------------------------------------------------------------------------
-
-
 def _slugify(value: str) -> str:
-    """Lowercase, ASCII-only, dash-separated. Suffixed elsewhere for uniqueness."""
     nfkd = unicodedata.normalize("NFKD", value)
     ascii_only = nfkd.encode("ascii", "ignore").decode("ascii")
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_only.lower()).strip("-")
@@ -129,11 +123,6 @@ async def _issue_session(
     )
 
     return create_access_token(user_id=user.id, org_id=org.id, role=role.value)
-
-
-# --------------------------------------------------------------------------------------
-# Signup / login / me
-# --------------------------------------------------------------------------------------
 
 
 @router.post(
@@ -234,12 +223,10 @@ async def me(
     )
 
 
-# --------------------------------------------------------------------------------------
-# Refresh / logout
-# --------------------------------------------------------------------------------------
-
-
 async def _revoke_chain(session: AsyncSession, chain_id: UUID) -> None:
+    # TODO(phase-13): pair with a periodic reaper that hard-deletes refresh
+    # tokens whose expires_at is older than ~90 days. The current table grows
+    # forever; fine for demo scale, not for prod.
     now = datetime.now(UTC)
     result = await session.execute(
         select(RefreshToken).where(
@@ -335,11 +322,6 @@ async def logout(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-# --------------------------------------------------------------------------------------
-# API keys
-# --------------------------------------------------------------------------------------
-
-
 @router.post(
     "/api-keys",
     response_model=ApiKeyCreateResponse,
@@ -356,6 +338,8 @@ async def create_api_key(
             detail="api keys can only be issued via an authenticated session",
         )
 
+    # TODO(phase-5+): per-key scopes (read-only, prompt-only, eval-only). For now
+    # every API key has the same authority as the issuing user's membership.
     plain, prefix, key_hash = generate_api_key()
     row = await repo.add(
         user_id=principal.user_id,

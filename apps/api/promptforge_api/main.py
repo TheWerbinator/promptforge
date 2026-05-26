@@ -13,6 +13,9 @@ from promptforge_api.core.config import get_settings
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # TODO(phase-16): wire structlog here (json formatter in prod, dev-friendly
+    # console formatter when PF_LOG_LEVEL=DEBUG) and init OpenTelemetry tracing
+    # against the Fly OTel exporter.
     get_settings()
     yield
 
