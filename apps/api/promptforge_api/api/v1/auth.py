@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from promptforge_api.core.config import get_settings
 from promptforge_api.core.db import get_session
-from promptforge_api.core.deps import Principal, get_principal
+from promptforge_api.core.deps import Principal, get_principal, get_repo
 from promptforge_api.core.security import (
     create_access_token,
     generate_api_key,
@@ -25,6 +25,7 @@ from promptforge_api.core.security import (
     verify_password,
 )
 from promptforge_api.models import ApiKey, Membership, Org, OrgRole, RefreshToken, User
+from promptforge_api.repositories import TenantRepository
 from promptforge_api.schemas.auth import (
     AccessOnlyResponse,
     ApiKeyCreateRequest,
@@ -347,7 +348,7 @@ async def logout(
 async def create_api_key(
     body: ApiKeyCreateRequest,
     principal: Principal = Depends(get_principal),
-    session: AsyncSession = Depends(get_session),
+    repo: TenantRepository[ApiKey] = Depends(get_repo(ApiKey)),
 ) -> ApiKeyCreateResponse:
     if principal.auth != "jwt":
         raise HTTPException(
@@ -356,15 +357,12 @@ async def create_api_key(
         )
 
     plain, prefix, key_hash = generate_api_key()
-    row = ApiKey(
-        org_id=principal.org_id,
+    row = await repo.add(
         user_id=principal.user_id,
         name=body.name,
         key_hash=key_hash,
         prefix=prefix,
     )
-    session.add(row)
-    await session.flush()
     return ApiKeyCreateResponse(
         id=row.id,
         name=row.name,
@@ -376,27 +374,18 @@ async def create_api_key(
 
 @router.get("/api-keys", response_model=list[ApiKeyListItem])
 async def list_api_keys(
-    principal: Principal = Depends(get_principal),
-    session: AsyncSession = Depends(get_session),
+    repo: TenantRepository[ApiKey] = Depends(get_repo(ApiKey)),
 ) -> list[ApiKeyListItem]:
-    result = await session.execute(
-        select(ApiKey)
-        .where(ApiKey.org_id == principal.org_id, ApiKey.revoked_at.is_(None))
-        .order_by(ApiKey.created_at.desc())
-    )
-    return [ApiKeyListItem.model_validate(row) for row in result.scalars()]
+    rows = await repo.list(limit=200, order_by=ApiKey.created_at.desc())
+    return [ApiKeyListItem.model_validate(r) for r in rows if r.revoked_at is None]
 
 
 @router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_api_key(
     key_id: UUID,
-    principal: Principal = Depends(get_principal),
-    session: AsyncSession = Depends(get_session),
+    repo: TenantRepository[ApiKey] = Depends(get_repo(ApiKey)),
 ) -> Response:
-    result = await session.execute(
-        select(ApiKey).where(ApiKey.id == key_id, ApiKey.org_id == principal.org_id)
-    )
-    row = result.scalar_one_or_none()
+    row = await repo.get(key_id)
     if row is None or row.revoked_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="api key not found")
     row.revoked_at = datetime.now(UTC)
