@@ -54,11 +54,6 @@ class AccessTokenPayload(BaseModel):
     typ: Literal["access"] = "access"
 
 
-# --------------------------------------------------------------------------------------
-# Passwords
-# --------------------------------------------------------------------------------------
-
-
 def hash_password(plain: str) -> str:
     return _password_hasher.hash(plain)
 
@@ -68,11 +63,6 @@ def verify_password(plain: str, hashed: str) -> bool:
         return _password_hasher.verify(hashed, plain)
     except (VerifyMismatchError, InvalidHashError):
         return False
-
-
-# --------------------------------------------------------------------------------------
-# Access tokens (JWT)
-# --------------------------------------------------------------------------------------
 
 
 def create_access_token(
@@ -111,13 +101,8 @@ def decode_access_token(token: str) -> AccessTokenPayload:
     return AccessTokenPayload.model_validate(payload)
 
 
-# --------------------------------------------------------------------------------------
-# Refresh tokens
-# --------------------------------------------------------------------------------------
-
-
 def generate_refresh_token() -> tuple[str, str]:
-    """Return (plain_token, hmac_hex). Plain goes in the client cookie; HMAC in DB."""
+    """Return (plain_token, hmac_hex). Plain goes in the cookie, hmac in the DB."""
     plain = secrets.token_urlsafe(48)
     return plain, hmac_token(plain)
 
@@ -131,17 +116,10 @@ def verify_refresh_token(plain: str, stored_hmac: str) -> bool:
     return hmac.compare_digest(hmac_token(plain), stored_hmac)
 
 
-# --------------------------------------------------------------------------------------
-# API keys
-# --------------------------------------------------------------------------------------
-
-
+# considered storing the prefix separately from the secret instead of embedding
+# it; chose embedded so the full key the user sees encodes its own lookup hint.
 def generate_api_key() -> tuple[str, str, str]:
-    """Return (plain_key, prefix, hash).
-
-    `plain_key` is shown to the user exactly once. `prefix` is stored cleartext for
-    O(1) lookup. `hash` is argon2 of the full plain key, stored in the row.
-    """
+    """Return (plain_key, prefix, argon2_hash)."""
     secret = secrets.token_urlsafe(API_KEY_SECRET_BYTES)
     prefix = secrets.token_urlsafe(6)[:API_KEY_RANDOM_PREFIX_LEN]
     plain = f"{API_KEY_PUBLIC_PREFIX}{prefix}_{secret}"

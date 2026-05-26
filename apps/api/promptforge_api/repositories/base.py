@@ -52,6 +52,9 @@ class TenantRepository(Generic[T]):
             )
         return row
 
+    # TODO(phase-5+): add **filters kwargs that resolve to column equality so
+    # callers don't have to bypass the repo for simple `name=...` lookups.
+    # Holding off until a real route asks for it — premature flexibility otherwise.
     async def list(
         self,
         *,

@@ -1,4 +1,9 @@
-"""ApiKey — machine credential scoped to an org."""
+"""ApiKey — machine credential scoped to an org.
+
+TODO(phase-5+): add a `scopes` jsonb column (e.g., ["prompts:read", "evals:run"])
+so external integrations can be issued least-privilege keys instead of inheriting
+the full membership role.
+"""
 
 from datetime import datetime
 from uuid import UUID
