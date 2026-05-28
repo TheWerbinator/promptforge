@@ -52,31 +52,38 @@ class TenantRepository(Generic[T]):
             )
         return row
 
-    # TODO(phase-5+): add **filters kwargs that resolve to column equality so
-    # callers don't have to bypass the repo for simple `name=...` lookups.
-    # Holding off until a real route asks for it — premature flexibility otherwise.
     async def list(
         self,
         *,
         offset: int = 0,
         limit: int = 50,
         order_by: Any | None = None,
+        where: Any | None = None,
     ) -> list[T]:
+        """List rows in the principal's org.
+
+        The optional `where` is composed *after* the org filter, so callers
+        cannot accidentally widen scope. Pass a SQLAlchemy expression.
+        """
         stmt = (
             select(self.model)
             .where(self.model.org_id == self.org_id)  # type: ignore[attr-defined]
             .offset(offset)
             .limit(limit)
         )
+        if where is not None:
+            stmt = stmt.where(where)
         if order_by is not None:
             stmt = stmt.order_by(order_by)
         result = await self.session.execute(stmt)
         return list(result.scalars())
 
-    async def count(self) -> int:
+    async def count(self, *, where: Any | None = None) -> int:
         stmt = (
             select(func.count()).select_from(self.model).where(self.model.org_id == self.org_id)  # type: ignore[attr-defined]
         )
+        if where is not None:
+            stmt = stmt.where(where)
         return int((await self.session.execute(stmt)).scalar_one())
 
     async def add(self, **fields: Any) -> T:

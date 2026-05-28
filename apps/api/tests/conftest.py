@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from promptforge_api.core.db import dispose_engine
+from promptforge_api.core.db import get_session
 
 if TYPE_CHECKING:
     from testcontainers.postgres import PostgresContainer
@@ -132,21 +132,35 @@ async def api_client(
 
     get_settings.cache_clear()
 
-    cleanup_engine = create_async_engine(pg_url, future=True)
+    # Per-test engine. We bind it to the app via dependency_overrides rather than
+    # mutating the module-global engine — that global was the source of flaky
+    # cross-test failures when one test's dispose raced another's pool.
+    test_engine = create_async_engine(pg_url, future=True)
     truncate_sql = (
-        "TRUNCATE refresh_tokens, api_keys, memberships, orgs, users RESTART IDENTITY CASCADE"
+        "TRUNCATE prompt_versions, prompts, refresh_tokens, api_keys, "
+        "memberships, orgs, users RESTART IDENTITY CASCADE"
     )
-    async with cleanup_engine.begin() as conn:
+    async with test_engine.begin() as conn:
         await conn.execute(text(truncate_sql))
-    await cleanup_engine.dispose()
 
-    await dispose_engine()
+    session_factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+
+    async def _override_get_session() -> AsyncIterator[AsyncSession]:
+        async with session_factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
 
     from promptforge_api.main import create_app
 
     app = create_app()
+    app.dependency_overrides[get_session] = _override_get_session
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         yield client
 
-    await dispose_engine()
+    await test_engine.dispose()
