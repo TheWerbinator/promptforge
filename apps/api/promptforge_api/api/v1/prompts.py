@@ -9,16 +9,18 @@ PUBLIC is currently a marker only; the share-link surface lands in phase 14.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import ValidationError
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from promptforge_api.core.db import get_session
 from promptforge_api.core.deps import Principal, get_principal, get_repo
+from promptforge_api.core.prompts import PromptTemplate, PromptVariable
 from promptforge_api.models import Prompt, PromptVersion, PromptVisibility
 from promptforge_api.repositories import TenantRepository
 from promptforge_api.schemas.prompt import (
@@ -40,6 +42,20 @@ def _visibility_filter(principal: Principal) -> ColumnElement[bool]:
         Prompt.visibility != PromptVisibility.PRIVATE,
         Prompt.created_by == principal.user_id,
     )
+
+
+def _validate_template(body: str, variables: list[dict[str, Any]]) -> None:
+    """422 if the body/variables don't form a valid PromptTemplate."""
+    try:
+        PromptTemplate(
+            body=body,
+            variables=[PromptVariable(**v) for v in variables],
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"invalid prompt template: {exc.errors()}",
+        ) from exc
 
 
 async def _resolve_prompt_for_principal(
@@ -83,6 +99,7 @@ async def create_prompt(
     repo: TenantRepository[Prompt] = Depends(get_repo(Prompt)),
     session: AsyncSession = Depends(get_session),
 ) -> PromptDetailResponse:
+    _validate_template(body.body, body.variables)
     try:
         prompt = await repo.add(
             name=body.name,
@@ -218,6 +235,7 @@ async def create_prompt_version(
     session: AsyncSession = Depends(get_session),
 ) -> PromptVersionResponse:
     prompt = await _resolve_prompt_for_principal(prompt_id, principal, repo)
+    _validate_template(body.body, body.variables)
 
     # TODO(phase-5+): wrap next_version_number + insert in a single statement
     # (INSERT ... SELECT max(version)+1) to drop the race window; retry-on-

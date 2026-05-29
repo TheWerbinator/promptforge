@@ -46,6 +46,56 @@ async def test_create_prompt_returns_prompt_with_v1(api_client: AsyncClient) -> 
     assert "document" in data["latest_version"]["body"]
 
 
+async def test_create_prompt_rejects_undeclared_body_variable(
+    api_client: AsyncClient,
+) -> None:
+    auth = await _signup(api_client)
+    response = await api_client.post(
+        "/api/v1/prompts",
+        headers=_headers(auth["access_token"]),
+        json={"name": "bad", "body": "hello {{missing}}", "variables": []},
+    )
+    assert response.status_code == 422
+    assert "template" in response.json()["detail"].lower()
+
+
+async def test_create_version_rejects_invalid_template(api_client: AsyncClient) -> None:
+    auth = await _signup(api_client)
+    headers = _headers(auth["access_token"])
+    created = (
+        await api_client.post(
+            "/api/v1/prompts",
+            headers=headers,
+            json={"name": "p", "body": "v1", "variables": []},
+        )
+    ).json()
+    response = await api_client.post(
+        f"/api/v1/prompts/{created['id']}/versions",
+        headers=headers,
+        json={"body": "needs {{x}}", "variables": []},
+    )
+    assert response.status_code == 422
+
+
+async def test_create_prompt_with_valid_variables_succeeds(
+    api_client: AsyncClient,
+) -> None:
+    auth = await _signup(api_client)
+    response = await api_client.post(
+        "/api/v1/prompts",
+        headers=_headers(auth["access_token"]),
+        json={
+            "name": "good",
+            "body": "Summarize in {{n}} sentences: {{doc}}",
+            "variables": [
+                {"name": "n", "type": "int", "default": 3, "required": False},
+                {"name": "doc", "type": "str", "required": True},
+            ],
+        },
+    )
+    assert response.status_code == 201
+
+
 async def test_duplicate_prompt_name_within_org_returns_409(api_client: AsyncClient) -> None:
     auth = await _signup(api_client)
     headers = _headers(auth["access_token"])
