@@ -209,3 +209,29 @@ Failed jobs that retry forever at zero delay would hot-loop the queue. Pure expo
 ## Why the worker is a skeleton instead of fully wired?
 
 Phase 8's scope is the queue primitive + a worker that can boot, attach to the DB, and consume. Actual handler logic for `kind="eval_case"` requires the eval engine (phase 11) — wiring it now would couple this phase to work that hasn't happened. The TODO and the registered-handler pattern make the seam obvious for phase 11 to fill in.
+
+# Phase 9 — `services/llm.py` (litellm wrapper)
+
+## Why retry only on transient errors, not bare Exception?
+
+`AuthenticationError` means the API key is wrong — retrying burns 3× the auth-fail cost for the same answer. `BadRequestError` (4xx invalid messages, content-policy violation) means the request is malformed — retrying gives the same error. The retry-on tuple is exactly the set that can succeed on a second try: `APIConnectionError`, `Timeout`, `RateLimitError`, `APIError` (provider 5xx). Anything else propagates immediately as `LLMCallError`. Saves money and surfaces real problems faster.
+
+## Why a global TokenBucket for the default key but skip it for BYOK?
+
+The bucket caps OUR hosted demo key at ≈10 req/s, which is appropriate for one shared key serving many demo visitors. A BYOK call is the user's own OpenAI/Anthropic key consuming the user's own quota — applying our bucket to it would slow down their personal usage for no reason and conflate two unrelated rate budgets. Skip is correct.
+
+## Why `LLMResponse` as a frozen dataclass instead of returning the litellm object?
+
+Three reasons. (1) The raw litellm `ModelResponse` shape can change across versions — pinning the route layer to the litellm type makes future upgrades a refactor instead of a non-event. (2) Frozen dataclass makes the contract explicit and auditable: text + tokens + cost + latency + raw. (3) Tests can construct an `LLMResponse` without going through litellm at all.
+
+## Why `cost_usd: float | None` instead of `0.0` on failure?
+
+`None` says "unknown." `0.0` would silently lie about cost on experimental/local models where pricing isn't in litellm's table. A future Run-cost-aggregation query would happily sum the lies. Surfacing `None` lets the dashboard render "—" instead of pretending zero, which is the honest UX.
+
+## Why `_acompletion_with_retry` is a thin wrapper instead of decorating `call_llm` directly?
+
+The retry decorator catches its allowed exceptions and retries; `call_llm` needs the parsing + LLMCallError translation to happen ONCE after retries exhaust. If the decorator wrapped `call_llm`, the parsing logic would re-execute on every retry and the error envelope would be wrong. Splitting them puts retry around just the network call.
+
+## Why catch raw `Exception` after the retryable tuple?
+
+Defense in depth. The retryable tuple covers known litellm exceptions; an unforeseen exception type (litellm upgrade, a third-party middleware, asyncpg connection thrash if the LLM call somehow used the DB) should still surface as a clean `LLMCallError` with the underlying type named, not propagate as an opaque traceback to the route handler.

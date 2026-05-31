@@ -2,7 +2,7 @@
 
 > Single source of truth for "where we are." Updated at the end of every phase per [feedback-phase-wrap]. If you're a fresh chat picking this up, read the **Bootstrap** section at the bottom first.
 
-**Current position:** apps/api Phase 8 done (`core/queue.py` + Job model + migration + eval_worker skeleton + queue integration tests). Strategic check 2026-05-29 confirmed direction; quality bar set to "senior engineer takes seriously"; Phase 10.5 deploy-smoke inserted. Next: Phase 9 (`services/llm.py` — litellm wrapper w/ retry + rate_limit).
+**Current position:** apps/api Phase 9 done (`services/llm.py` — litellm wrapper, BYOK, transient-only retry, global token bucket). Next: Phase 10 (Run model + `POST /versions/{id}/run` endpoint).
 
 **Last verified locally:** 2026-05-29 — 71 unit tests pass; ruff + format + mypy --strict clean across 26 source files. Integration/e2e (~70 tests) require Docker for testcontainers Postgres; not run today.
 
@@ -18,10 +18,10 @@
 - [x] **Phase 6 — `core/prompts.py` typed templates.** `PromptVariable`, `PromptTemplate`, applicative `render()` (collects every error before raising), `fingerprint()`, wired into create routes so invalid templates return 422.
 - [x] **Phase 7 — `core/async_utils.py`.** `retry` decorator (exponential/linear/constant + equal jitter), `TokenBucket` with injectable clock/sleep for testability, `rate_limited` decorator, `gather_bounded` w/ overloaded raise/collect.
 - [x] **Phase 8 — `core/queue.py` + worker.** Postgres `SELECT FOR UPDATE SKIP LOCKED` queue w/ CTE-based atomic claim, `LISTEN/NOTIFY` fanout (channel `jobs` for enqueue events, `batch_<uuid>` for SSE eval progress), Job model on BIGSERIAL w/ partial index on queued rows, `ClaimedJob` async-context-manager (ack on clean exit / requeue-with-backoff on raise / mark failed after max_attempts), `workers/eval_worker.py` skeleton process w/ graceful SIGINT/SIGTERM. Migration `20260529_0004`. 8 integration tests cover happy path, kind filter, run_after, ack, requeue, terminal fail, SKIP LOCKED no-double-claim concurrency, batch_progress aggregation.
+- [x] **Phase 9 — `services/llm.py`.** litellm async wrapper (`call_llm`). Transient-only retry (APIConnectionError, Timeout, RateLimitError, APIError) — auth/bad-request propagate immediately. Global TokenBucket (10/s) for the hosted demo key; BYOK calls skip the limiter (user hits their own quota). Typed `LLMResponse` dataclass w/ text/tokens/cost/latency/raw. Cost via `litellm.completion_cost`; falls back to None if pricing unknown. 9 unit tests w/ fully mocked `litellm.acompletion`.
 
 ## apps/api — pending
 
-- [ ] **Phase 9 — `services/llm.py`.** litellm wrapper with `retry` + `rate_limited` applied, cost computation, mocked tests.
 - [ ] **Phase 10 — Runs.** `POST /versions/{id}/run`, Run model + endpoint, services + repo + tests.
 - [ ] **Phase 10.5 — DEPLOY SMOKE.** Push api + Postgres to Fly. Verify `/health` + `/auth/signup` + `/docs` + one `/run` work in production. Half-day; de-risks the deploy infra before 6 more phases depend on it. *(Added 2026-05-29 per `feedback-phase-strategy`.)*
 - [ ] **Phase 11 — Eval engine.** EvalSuite/EvalCase/EvalBatch/EvalResult, 4 judge types (exact/contains/regex/llm_judge), batch runner, SSE stream.
