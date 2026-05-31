@@ -111,3 +111,101 @@ A web-only change shouldn't run api tests and vice versa. CI minutes saved + fas
 ## Why dark mode default with no toggle?
 
 Demo UX: looks better in screenshots and on hiring teams' likely-dark IDEs. Toggle is a feature I'd add if real users requested. Senior signal is "make decisions; defer features without users to ask."
+
+---
+
+# Phase 5 — Prompts + versions CRUD
+
+## Why append-only versions instead of mutating a single body?
+
+Every Run row points at a specific PromptVersion, so the exact bytes that produced any historical output stay reproducible forever. Mutating in place would make eval comparisons across "v1 of the summarizer" vs "v2" meaningless because v1 would no longer exist. Append-only is also the auditing story: who changed what, when. The unique(prompt_id, version) constraint enforces sequential integers per prompt.
+
+## Why visibility filtering at the route layer, not in the repository?
+
+TenantRepository's invariant is `org_id` scope only. Visibility is a per-resource concept that doesn't generalize — adding it to the base class would couple the repo to every model's visibility column. Routes layer it on via the `where` kwarg I added to `list()`. Same enforcement pattern, but visible at the call site where it's defensible.
+
+## Why 404 on PRIVATE prompts the user doesn't own, not 403?
+
+Same reason as cross-org access: 403 leaks existence ("there is a thing here, you just can't see it"). 404 says nothing about whether the prompt exists. Consistent leak-protection across all tenancy + visibility paths.
+
+## Why `next_version_number` is max+1 in Python, not a sequence?
+
+Simplicity. The unique(prompt_id, version) constraint catches the rare race; on conflict we 409 and the client retries. A per-prompt Postgres sequence would be cleaner but adds DDL complexity for a write pattern that's already low-frequency (humans editing prompts, not machines). TODO tagged (`phase-5+`) to collapse compute + insert into one statement when it matters.
+
+## Why `where` kwarg on TenantRepository.list/count instead of subclassing?
+
+I considered PromptRepository extending the base, but it would have been ~20 lines of glue around what's really just "compose another filter after the org scope." The `where` kwarg is applied AFTER the mandatory org_id filter, so callers can narrow but can't widen tenant scope. Documented in the docstring.
+
+# Phase 6 — `core/prompts.py` typed templates
+
+## Why applicative (collect-all) validation instead of fail-fast?
+
+Fail-fast UX is hostile: user submits a form with 3 mistakes, gets told about #1, fixes it, submits again, gets told about #2, etc. Three round-trips. Applicative validation returns all 3 in one response. Pattern is canonical in functional-programming literature (Validation applicative vs Either monad). The module docstring calls this out explicitly because it's the literal lesson from the applicative-practice training repo.
+
+## Why reject undeclared body variables at construction time?
+
+A `{{name}}` in the body that has no declared spec means render() will fail unpredictably at the worst moment (when an LLM call is about to happen). Catching it at template construction means errors land where the user is editing, not where the platform is executing. The construction-time check makes invalid templates unrepresentable beyond that line.
+
+## Why bool excluded from int/float type checks?
+
+`isinstance(True, int)` is True in Python — bool is a subclass of int. Without an explicit exclusion, `n=True` would pass a `type="int"` check, and render would substitute "True" into the body. That's almost never what the user meant. Honest type validation rejects it.
+
+## Why fingerprint with sorted variable list?
+
+Two templates differing only in declaration order should be identical for caching purposes. Sorting by name before hashing makes the fingerprint a true content hash, not a representation hash. Uses canonical JSON (sort_keys=True, no whitespace) for the same reason.
+
+# Phase 7 — `core/async_utils.py`
+
+## Why retry / rate-limit / gather as internal modules, not tenacity + aiolimiter?
+
+Three reasons. (1) Combined size is ~100 lines — adopting two deps for that surface area is the wrong trade. (2) This module is the async-orchestration showcase of the repo per the training-repo absorption story; importing tenacity hides the muscle. (3) Pinning + tracking two more deps' CVEs is real maintenance cost for portfolio scope. I'd adopt tenacity the moment retry policies grew into per-exception strategies or stop conditions.
+
+## Why equal jitter instead of full jitter or no jitter?
+
+Equal jitter (`delay/2 + random.uniform(0, delay/2)`) guarantees a nonzero minimum wait while still spreading the herd. Full jitter (`random.uniform(0, delay)`) can collapse to zero, which makes thundering-herd worse on the first retry. No jitter synchronizes failures across callers (every retry happens at the same instant). The AWS architecture blog post on backoff covers this well; equal jitter is their middle-ground recommendation.
+
+## Why TokenBucket takes injectable clock/sleep?
+
+So the pacing logic is unit-testable with a fake clock that advances by `sleep(d)` calls — no real wall-clock waits in tests. The injection points are kwargs with sensible defaults (`time.monotonic`, `asyncio.sleep`), so production callers don't see the seam. This is the test-doubles pattern from the integration-tests book, applied to async primitives.
+
+## Why one bucket per decorated function, shared globally?
+
+The rate-limit semantic we want is "≤10 LLM requests per second across the whole process," not "≤10 per call site." One bucket bound at decoration time gives that. If two distinct LLM call sites needed different limits, each would have its own decorator with its own bucket — also correct.
+
+## Why cancel pending tasks on first error in `gather_bounded(on_error="raise")`?
+
+If the caller is going to see an exception, they're aborting; leaving sibling tasks running burns LLM tokens (and money) for results the caller will discard. Cancellation is best-effort — tasks already in `await fn(...)` may finish their in-flight call before the cancel takes effect, but no new work starts. This matches the `asyncio.TaskGroup` semantics in Python 3.11 without forcing callers to deal with `ExceptionGroup`.
+
+# Phase 8 — `core/queue.py` + worker
+
+## Why Postgres `SKIP LOCKED` instead of Redis + RQ / Celery / SQS?
+
+One-DB principle. We already have Postgres; adding Redis adds a service to provision, monitor, secure, and back up — for moderate throughput (eval batches at hundreds of jobs/s tops), `SELECT ... FOR UPDATE SKIP LOCKED` is the production-shape primitive used by GraphileWorker, river queue, Hatchet, Inngest. If this ever needed 10k+ jobs/s I'd migrate to Redis-backed RQ, but the SKIP LOCKED setup is correct at our scale and removes a dependency.
+
+## Why BIGSERIAL for the jobs primary key instead of UUID?
+
+The jobs table is an internal queue, not an externally-shared identifier. BIGSERIAL gives monotonic ordering for cheap FIFO-ish pulls and a smaller index. UUIDs would add randomness with zero benefit here. Every other table in the schema is UUID-primary because IDs leak in URLs and we want unguessability; jobs are never in URLs.
+
+## Why the partial index `WHERE status = 'queued'`?
+
+The claim query walks `kind + run_after` on rows whose status is queued. A full index on `(kind, run_after)` would also index done and failed rows, which accumulate forever (until the phase-13 reaper). The partial index keeps the working set tiny — done/failed rows don't bloat what the planner has to scan.
+
+## Why the `ClaimedJob` async-context-manager pattern?
+
+It's the only safe way to ensure ack/fail always runs even when the handler raises mid-work. The alternative — call `claim()`, then handler, then `await ack()` in caller code — guarantees we'll forget the ack in some error path. The context manager makes it impossible to leave a job stuck in `running` indefinitely (well, until the future reaper-of-stuck-running-jobs runs; that's phase-13).
+
+## Why a CTE for the claim query?
+
+`UPDATE ... WHERE id IN (subquery FOR UPDATE SKIP LOCKED ...)` doesn't apply SKIP LOCKED to the UPDATE itself — Postgres acquires its own write lock on the chosen rows. The CTE form `WITH picked AS (SELECT ... FOR UPDATE SKIP LOCKED) UPDATE jobs WHERE id IN (SELECT id FROM picked)` is the canonical recipe to get atomic select-and-mark with the right locking semantics. Two concurrent claims never see the same row.
+
+## Why NOTIFY payloads capped + small?
+
+Postgres caps NOTIFY payloads at 8KB by default. Putting the full job/result row in there would couple the queue to the result schema and break if anything grows. The pattern here is "notify with a tiny status event (which row changed, what status), then the subscriber SELECTs full data if it cares." That's how SSE eval-progress will work in phase 11 — small status events fan out, web fetches full row on demand.
+
+## Why exponential backoff capped at 60s on requeue?
+
+Failed jobs that retry forever at zero delay would hot-loop the queue. Pure exponential without a cap could grow to hours, which is wrong for transient errors. `min(60, 2**attempts)` gives: 2s → 4s → 8s → 16s → 32s → 60s. Bounded reasonable waits, no thundering herd, no week-long retries.
+
+## Why the worker is a skeleton instead of fully wired?
+
+Phase 8's scope is the queue primitive + a worker that can boot, attach to the DB, and consume. Actual handler logic for `kind="eval_case"` requires the eval engine (phase 11) — wiring it now would couple this phase to work that hasn't happened. The TODO and the registered-handler pattern make the seam obvious for phase 11 to fill in.

@@ -1,8 +1,8 @@
 # PromptForge Architecture
 
-> System overview. For the reasoning behind every choice, see [INTERVIEW-NOTES.md](INTERVIEW-NOTES.md). For the full development plan, see [../../PLAN.md](../../PLAN.md).
+> System overview. Reasoning for every choice lives in [INTERVIEW-NOTES.md](INTERVIEW-NOTES.md). Current implementation progress lives in [PROGRESS.md](PROGRESS.md). Master plan in [../../PLAN.md](../../PLAN.md).
 
-## System diagram
+## System diagram (target end state)
 
 ```
               ┌────────────────────────────────────────────────────┐
@@ -41,53 +41,73 @@
 
 ## Apps
 
-### apps/api (FastAPI backend)
+### apps/api — FastAPI backend (in active development)
 
-Multi-tenant API powering prompt management, eval orchestration, and the job queue. Two processes share a single Docker image: `api` (uvicorn) and `worker` (queue consumer).
+Two processes share a single Docker image: `api` (uvicorn) and `worker` (queue consumer). Multi-tenant API powering prompt management, version-aware execution, eval orchestration, and the job queue.
 
-Stack: FastAPI · SQLAlchemy 2.x async · Alembic · Postgres 16 + pgvector · Pydantic v2 · python-jose (JWT HS256) · argon2-cffi · litellm · uv · ruff · mypy strict · pytest · testcontainers-postgres.
+**Stack:** FastAPI · SQLAlchemy 2.x async · Alembic (async-mode using asyncpg, no sync driver) · Postgres 16 + pgvector · Pydantic v2 · python-jose (JWT HS256) · argon2-cffi · litellm · uv · ruff · mypy strict · pytest · testcontainers-postgres.
 
-Internal modules (training-repo DNA):
-- `core/prompts.py` — typed prompt templates
-- `core/async_utils.py` — retry/backoff/bounded gather
-- `core/queue.py` — Postgres `SKIP LOCKED` queue + `LISTEN/NOTIFY` SSE fanout
+**Internal modules (training-repo DNA):**
+- `core/config.py` — pydantic-settings
+- `core/security.py` — JWT, argon2, API key hashing, refresh rotation w/ chain-revocation replay defense
+- `core/db.py` — lazy async engine, session factory, `get_session` dependency
+- `core/deps.py` — `Principal`, `get_principal`, `require_role`, `get_repo(Model)` factory
+- `core/prompts.py` — typed `PromptTemplate` w/ applicative `render()` and content-stable `fingerprint()`  (applicative-practice DNA)
+- `core/async_utils.py` — `retry` decorator, `TokenBucket` w/ injectable clock, `rate_limited`, `gather_bounded` (promises-practice DNA)
+- `core/queue.py` — *pending phase 8* — Postgres `SKIP LOCKED` queue + `LISTEN/NOTIFY` SSE fanout (sqlite-practice DNA reframed)
+- `repositories/base.py` — `TenantRepository[T]` generic; mandatory `org_id` scope; optional composed-after `where` kwarg; cross-org returns None (404, not 403)
 
-### apps/ragent (RAG + agent service)
+**Routes (current):** `/api/v1/auth/{signup,login,me,refresh,logout,api-keys}` · `/api/v1/prompts` CRUD + `/prompts/{id}/versions` + `/versions/{id}` · `/health`. OpenAPI at `/docs`.
 
-Four corpora (`promptforge-docs`, `fastapi-docs`, `arxiv-ml-abstracts`, user-uploaded). Per-corpus embedding model (OpenAI 1536d or local bge 384d). Hybrid retrieval (vector + BM25 + RRF). Optional cross-encoder rerank. ReAct loop w/ 3 tools (`search_docs`, `fetch_passage`, `cite_sources`). Streams chat via SSE. Fetches system prompt from apps/api at runtime — real platform integration.
+**Routes (pending):** `/runs`, `/eval-suites`, `/eval-batches`, `/demo/login`, `/public/share/{token}`.
 
-### apps/web (Next.js frontend)
+### apps/ragent — RAG + agent service *(not started)*
+
+Four corpora (3 seeded + user-uploadable). Per-corpus embedding model (OpenAI `text-embedding-3-small` 1536d or local `bge-small-en-v1.5` 384d). Hybrid retrieval (pgvector cosine + BM25 + RRF). Optional cross-encoder rerank. ReAct loop w/ 3 tools (`search_docs`, `fetch_passage`, `cite_sources`). Streams chat via SSE. Fetches system prompt from apps/api at runtime — real platform integration.
+
+### apps/web — Next.js frontend *(not started)*
 
 Next.js 15 App Router · React 19 · TypeScript strict · Tailwind · shadcn/ui · Zustand (small UI stores) · openapi-typescript (API types codegen) · eventsource-parser (SSE) · monaco-editor (prompt body) · Vitest · Playwright · pnpm.
 
-Routes: marketing landing, auth, prompts CRUD, eval suites + batches, dashboard (KPI tiles + paginated table), ragent chat, settings, public share.
+## Data model (current)
 
-## Data model
+| Entity | Purpose | Shipped |
+|---|---|---|
+| `User` | Authentication subject | ✓ phase 2 |
+| `Org`, `Membership`, `OrgRole` enum | Multi-tenant boundary | ✓ phase 2 |
+| `ApiKey` | Machine credential (argon2-hashed, prefix lookup) | ✓ phase 3 |
+| `RefreshToken` | Single-use rotated session w/ chain-revocation replay defense | ✓ phase 3 |
+| `Prompt` | Per-org named prompt w/ tags + visibility | ✓ phase 5 |
+| `PromptVersion` | Append-only versioned body + variables jsonb | ✓ phase 5 |
+| `Job` | Postgres queue (SKIP LOCKED) | pending phase 8 |
+| `Run` | Single LLM execution record | pending phase 10 |
+| `EvalSuite`, `EvalCase`, `EvalBatch`, `EvalResult` | Eval orchestration | pending phase 11 |
+| `ShareToken` | Public read-only links | pending phase 14 |
+| `Corpus`, `Document`, `Chunk` | ragent vector store (`embedding_1536` + `embedding_384` nullable cols) | pending |
+| `Conversation`, `Message` | Chat history | pending |
 
-| Entity | Purpose |
-|---|---|
-| `User`, `Org`, `Membership` | Multi-tenant auth |
-| `ApiKey`, `RefreshToken` | Machine + session credentials |
-| `Prompt`, `PromptVersion`, `Run` | Prompt management + iteration |
-| `EvalSuite`, `EvalCase`, `EvalBatch`, `EvalResult` | Eval orchestration + results |
-| `ShareToken` | Public read-only links |
-| `Job` | Queue (SKIP LOCKED) |
-| `Corpus`, `Document`, `Chunk` | ragent vector store (chunks have `embedding_1536` + `embedding_384` nullable columns) |
-| `Conversation`, `Message` | Chat history |
-
-All carry `org_id`. Repository base class enforces tenancy.
+All carry `org_id` and go through `TenantRepository`. Routes use the `get_repo(Model)` dependency factory; direct `session.execute` in routes is a code smell.
 
 ## Auth flow
 
 ```
-Signup → JWT access (15 min) + refresh cookie (30 days, httpOnly, SameSite=Lax)
-                                  ↓
+Signup ─► JWT access (15 min) + refresh cookie (30 days, httpOnly, SameSite=Lax)
+                                  │
+                                  ▼
                           Refresh rotated on every refresh call
-                                  ↓
-                          Reuse of rotated refresh → revoke entire chain
+                                  │
+                                  ▼
+                          Reuse of rotated refresh ─► revoke entire chain
 ```
 
-Demo mode runs side-by-side: `POST /demo/login` issues a read-only JWT for the seeded `Demo Corp` org. BYOK header lets demo users run LLM calls with their own key.
+Demo mode (pending phase 13): `POST /demo/login` issues a read-only JWT for the seeded `Demo Corp` org. BYOK header lets demo users run LLM calls with their own key.
+
+## Test architecture
+
+- **Unit** — pure logic, no DB. Mocked LLM/time. ~71 tests (phase 7).
+- **Integration** — testcontainers Postgres (session-scoped), per-test transactional rollback via `db_session` fixture. Migrations applied once per session.
+- **E2E** — full ASGI app + testcontainers Postgres + per-test truncate. Bound to the app via FastAPI `app.dependency_overrides[get_session]` rather than mutating the module-global engine (avoids cross-test flake on engine dispose races).
+- **Tenancy** — shared `tests/tenancy/_helpers.make_two_orgs` produces two signed-in users in distinct orgs. Each protected resource gets its own `test_*_tenancy.py` contract.
 
 ## Local development
 
@@ -95,4 +115,4 @@ Demo mode runs side-by-side: `POST /demo/login` issues a read-only JWT for the s
 docker compose -f infra/compose.yml up --wait
 ```
 
-See [DEMO.md](DEMO.md) once it lands.
+Brings up Postgres + a one-shot `api-migrate` (runs `alembic upgrade head`) + the api process. See `infra/compose.yml`. Demo flow lands in phase 13; deploy in phase 16.

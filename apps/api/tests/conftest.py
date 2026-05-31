@@ -137,7 +137,7 @@ async def api_client(
     # cross-test failures when one test's dispose raced another's pool.
     test_engine = create_async_engine(pg_url, future=True)
     truncate_sql = (
-        "TRUNCATE prompt_versions, prompts, refresh_tokens, api_keys, "
+        "TRUNCATE jobs, prompt_versions, prompts, refresh_tokens, api_keys, "
         "memberships, orgs, users RESTART IDENTITY CASCADE"
     )
     async with test_engine.begin() as conn:
