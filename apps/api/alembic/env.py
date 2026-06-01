@@ -24,8 +24,13 @@ target_metadata = Base.metadata
 
 
 def _async_db_url() -> str:
-    """Return the configured async SQLAlchemy URL."""
-    return get_settings().database_url.get_secret_value()
+    """Return a SQLAlchemy DSN normalized to use the asyncpg driver.
+
+    Provider DSNs (Neon, Fly Postgres) use bare `postgresql://` which SQLAlchemy
+    routes to psycopg2 by default — that's the sync driver we don't ship.
+    Settings.async_database_url() rewrites the scheme + sslmode→ssl param.
+    """
+    return get_settings().async_database_url()
 
 
 def run_migrations_offline() -> None:

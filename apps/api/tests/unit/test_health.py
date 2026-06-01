@@ -40,3 +40,41 @@ def test_settings_missing_database_url_raises(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("PF_JWT_SECRET", "a" * 48)
     with pytest.raises(ValueError, match=r"database_url|DATABASE_URL"):
         Settings()
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # Already-correct DSN passes through.
+        (
+            "postgresql+asyncpg://u:p@host:5432/db",
+            "postgresql+asyncpg://u:p@host:5432/db",
+        ),
+        # Bare postgresql:// scheme (what Neon / Fly Postgres hand out).
+        (
+            "postgresql://u:p@host:5432/db",
+            "postgresql+asyncpg://u:p@host:5432/db",
+        ),
+        # Old-style postgres:// scheme (Heroku-era, still seen).
+        (
+            "postgres://u:p@host:5432/db",
+            "postgresql+asyncpg://u:p@host:5432/db",
+        ),
+        # sslmode=require → ssl=require (asyncpg's name).
+        (
+            "postgresql://u:p@host:5432/db?sslmode=require",
+            "postgresql+asyncpg://u:p@host:5432/db?ssl=require",
+        ),
+        # Combined: bare scheme + sslmode + extra params untouched.
+        (
+            "postgres://u:p@host/db?sslmode=require&application_name=x",
+            "postgresql+asyncpg://u:p@host/db?ssl=require&application_name=x",
+        ),
+    ],
+)
+def test_async_database_url_normalizes(
+    monkeypatch: pytest.MonkeyPatch, raw: str, expected: str
+) -> None:
+    monkeypatch.setenv("PF_DATABASE_URL", raw)
+    monkeypatch.setenv("PF_JWT_SECRET", "a" * 48)
+    assert Settings().async_database_url() == expected

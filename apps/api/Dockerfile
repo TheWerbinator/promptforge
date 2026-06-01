@@ -13,8 +13,10 @@ RUN apt-get update \
 
 COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /uvx /usr/local/bin/
 
-# Install only runtime deps for layer caching
-COPY pyproject.toml uv.lock* ./
+# Install only runtime deps for layer caching. README.md is required because
+# pyproject.toml declares it; hatchling validates the field during the editable
+# install in the second uv sync below, even though we're not publishing.
+COPY pyproject.toml uv.lock* README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project || uv sync --no-dev --no-install-project
 

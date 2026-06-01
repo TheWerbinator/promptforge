@@ -10,6 +10,7 @@ from promptforge_api.models.job import Job
 from promptforge_api.models.org import Membership, Org, OrgRole
 from promptforge_api.models.prompt import Prompt, PromptVersion, PromptVisibility
 from promptforge_api.models.refresh_token import RefreshToken
+from promptforge_api.models.run import Run
 from promptforge_api.models.user import User
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "PromptVersion",
     "PromptVisibility",
     "RefreshToken",
+    "Run",
     "User",
 ]

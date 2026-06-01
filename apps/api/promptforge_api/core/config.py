@@ -41,6 +41,25 @@ class Settings(BaseSettings):
     # local dev and the in-process TestClient). Always True in deployed envs.
     cookie_secure: bool = True
 
+    def async_database_url(self) -> str:
+        """Return a SQLAlchemy DSN guaranteed to use the asyncpg driver.
+
+        Cloud providers (Neon, Fly Postgres, Supabase) hand out DSNs with the
+        bare `postgresql://` scheme. SQLAlchemy parses that as psycopg2-default,
+        which is the sync driver we deliberately don't ship. Rewrite the scheme
+        and the sslmode → ssl query param (asyncpg's naming) so any of the
+        common provider DSN shapes works without manual editing.
+        """
+        raw = self.database_url.get_secret_value()
+        if raw.startswith("postgresql://"):
+            raw = "postgresql+asyncpg://" + raw[len("postgresql://") :]
+        elif raw.startswith("postgres://"):
+            raw = "postgresql+asyncpg://" + raw[len("postgres://") :]
+        # asyncpg uses `ssl=` not `sslmode=`. SQLAlchemy's asyncpg dialect
+        # translates this in recent versions, but normalizing makes it
+        # provider-agnostic and survives future SQLAlchemy changes.
+        return raw.replace("sslmode=", "ssl=")
+
 
 @lru_cache
 def get_settings() -> Settings:
