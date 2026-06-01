@@ -18,15 +18,18 @@ from typing import Any
 
 from promptforge_api.core.db import get_session_factory
 from promptforge_api.core.queue import ClaimedJob, Queue
+from promptforge_api.services.eval_runner import run_eval_case
 
 log = logging.getLogger("promptforge.worker")
 
 
 async def _handle_eval_case(payload: dict[str, Any]) -> None:
-    # TODO(phase-11): wire to services/eval_runner.run_case(payload) — fetch the
-    # PromptVersion + EvalCase, render the template, call_llm, run judge, persist
-    # EvalResult, publish a small NOTIFY event on the batch channel.
-    log.info("eval_case stub received payload keys=%s", list(payload.keys()))
+    log.info(
+        "eval_case start batch=%s case=%s",
+        payload.get("batch_id"),
+        payload.get("case_id"),
+    )
+    await run_eval_case(payload, session_factory=get_session_factory())
 
 
 HANDLERS = {

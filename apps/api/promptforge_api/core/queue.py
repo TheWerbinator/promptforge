@@ -231,9 +231,7 @@ async def notify_batch(engine: AsyncEngine, batch_id: UUID, event: dict[str, Any
     if len(payload) > 7800:  # NOTIFY caps at 8000; leave headroom
         raise ValueError("batch notify payload too large; fetch full data via GET")
     async with engine.begin() as conn:
-        await conn.execute(
-            text("SELECT pg_notify(:c, :p)"), {"c": channel, "p": payload}
-        )
+        await conn.execute(text("SELECT pg_notify(:c, :p)"), {"c": channel, "p": payload})
 
 
 def _batch_channel(batch_id: UUID) -> str:

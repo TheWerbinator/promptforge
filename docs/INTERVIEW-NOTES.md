@@ -281,3 +281,47 @@ Provider DSNs (Neon, Fly Postgres, Heroku, Supabase) hand you bare `postgresql:/
 ## Why two Fly machines (api + worker) instead of one process running both?
 
 Separation of concerns + independent scaling. The api machine auto-stops to zero on idle (cheap demo cost). The worker runs continuously polling the queue; if it crashed under load, the api machine would still serve reads. Same Docker image, two `[processes]` entries in `fly.toml` — one image, two scale dials. Cost: ~$4.65/mo for both at shared-cpu-1x; the worker can be scaled to zero (`fly scale count worker=0`) until the eval engine lands in phase 11.
+
+# Phase 11 — Eval engine
+
+## Why four judge types and not just one?
+
+Each judge optimizes for a different "what does correct look like" question:
+- **exact**: deterministic ground-truth answers (math, codegen with a known right output)
+- **contains**: substring matching for "the answer must mention X"
+- **regex**: structured outputs (extract email, match a format)
+- **llm_judge**: open-ended quality questions ("is this answer helpful, on-topic, factually correct")
+
+A real eval suite mixes them. The judge field on EvalCase is nullable so a single suite can pick a default (e.g. contains) and individual cases can override (one regex case in a contains-heavy suite). Deterministic judges return score ∈ {0.0, 1.0}; llm_judge returns a clamped float so you can set passing thresholds.
+
+## Why `unique(batch_id, version_id, case_id)` + ON CONFLICT instead of plain INSERT?
+
+The queue retries failed jobs. If a worker crashes mid-write or the upsert ack races a NOTIFY, the same eval-case job can be re-run. A plain INSERT would duplicate the EvalResult row; the unique constraint + `ON CONFLICT DO UPDATE` makes re-running idempotent — the new result replaces the old. Same convergence guarantees, no manual dedup.
+
+## Why does the eval runner catch errors instead of letting the queue retry?
+
+A run that fails (LLM down, template invalid, judge LLM rejected) is a *durable* outcome — it's a real "this version failed this case" data point that belongs in the EvalResult row. Re-raising would have the queue requeue the job and we'd loop forever on a deterministic failure. Catching here and recording `passed=False` w/ reasoning converges: the batch completes, the dashboard shows error rate, and the human investigates.
+
+The single case where we'd want a retry — transient provider error — is already handled inside `services/llm.py` via the retry decorator before the LLMCallError surfaces.
+
+## Why does `_bump_progress` atomically increment in a single statement?
+
+Two workers finishing two different jobs in the same batch could race a read-modify-write on `completed_jobs`. The SQL form `UPDATE eval_batches SET completed_jobs = completed_jobs + 1 RETURNING completed_jobs` is atomic at the row level. The RETURNING gives us the post-increment value, which we use to decide whether to flip status to done. No lock needed; the race is impossible.
+
+## Why SSE via asyncpg `add_listener` instead of polling the batch row?
+
+Polling would burn DB connections per active SSE client × poll interval. LISTEN/NOTIFY is push: the worker emits one `pg_notify` per result, every subscriber gets it via their own LISTEN. Single bidirectional cost per client. The SSE handler uses a raw asyncpg connection (SQLAlchemy doesn't expose LISTEN through its async API) and forwards each NOTIFY to the client. 30-second timeout emits a heartbeat so Fly's proxy doesn't drop the connection on long silences.
+
+## Why does the SSE endpoint emit a "done" event and stop?
+
+EventSource clients reconnect automatically on disconnect. If we just stopped sending events when the batch finished, the client would reconnect to a permanently-quiet channel — wasted resource. Emitting an explicit `event: done` lets the frontend close the EventSource cleanly, drop the connection, and stop listening. Server cleanup (UNLISTEN, raw connection close) runs in the `finally`.
+
+## Why test the worker by importing `_run_one` instead of spawning the worker subprocess?
+
+The worker subprocess does two things: signal handling + an infinite poll loop. Both are uninteresting to test — they're standard Unix process plumbing. The actual eval-case handling is in `run_eval_case`, and `_run_one` is the thin context-manager wrapper. Calling `_run_one(job)` from a test exercises the real production code path without the process-management overhead. The `_drain_queue` helper just claims jobs and feeds them to `_run_one`, which is exactly what the subprocess does in a loop.
+
+## Why was the test conftest leaking the global engine?
+
+The api routes use `get_session_factory()` directly for the queue enqueue (because the queue lives outside the request transaction). That returns the module-global lazy engine, not the per-test override. Across tests, the global engine accumulated asyncpg connections bound to event loops that pytest-asyncio had since closed. On teardown, asyncpg tried to gracefully close those connections via `asyncio.create_task`, which raised "Event loop is closed."
+
+Fix: dispose the global engine at the end of each `api_client` fixture along with the per-test engine. The next test rebuilds the global lazily on first access. Stable across runs.

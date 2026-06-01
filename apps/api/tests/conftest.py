@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from promptforge_api.core.db import get_session
+from promptforge_api.core.db import dispose_engine, get_session
 
 if TYPE_CHECKING:
     from testcontainers.postgres import PostgresContainer
@@ -137,7 +137,8 @@ async def api_client(
     # cross-test failures when one test's dispose raced another's pool.
     test_engine = create_async_engine(pg_url, future=True)
     truncate_sql = (
-        "TRUNCATE runs, jobs, prompt_versions, prompts, refresh_tokens, "
+        "TRUNCATE eval_results, eval_batches, eval_cases, eval_suites, "
+        "runs, jobs, prompt_versions, prompts, refresh_tokens, "
         "api_keys, memberships, orgs, users RESTART IDENTITY CASCADE"
     )
     async with test_engine.begin() as conn:
@@ -163,4 +164,10 @@ async def api_client(
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         yield client
 
+    # Dispose BOTH the per-test engine and the global engine that some routes
+    # (Queue.enqueue, _drain_queue in tests) use directly via get_session_factory().
+    # Leaving the global engine alive across tests leaks asyncpg connections
+    # bound to closed event loops — manifests as "Event loop is closed" during
+    # later pool teardown.
+    await dispose_engine()
     await test_engine.dispose()
