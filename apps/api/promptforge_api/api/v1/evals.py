@@ -23,7 +23,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from promptforge_api.core.db import get_engine, get_session, get_session_factory
@@ -231,51 +231,77 @@ async def stream_batch(
 ) -> EventSourceResponse:
     """SSE: forwards pg_notify events for this batch's channel until the
     batch is done (or the client disconnects)."""
-    batch = await repo.get_or_404(batch_id)
-    engine = get_engine()
-    channel = _batch_channel(batch.id)
+    batch = await repo.get_or_404(batch_id)  # tenancy: cross-org → 404
+    return EventSourceResponse(eval_event_stream(get_engine(), batch.id))
 
-    async def _events() -> AsyncIterator[dict[str, Any]]:
-        # Subscribe via asyncpg LISTEN. We need a raw asyncpg connection because
-        # SQLAlchemy doesn't expose LISTEN through its async API directly.
-        raw = await engine.raw_connection()
+
+_TERMINAL_STATUSES = ("done", "failed")
+
+
+async def eval_event_stream(engine: AsyncEngine, batch_id: UUID) -> AsyncIterator[dict[str, Any]]:
+    """Yield SSE events for a batch until it reaches a terminal state.
+
+    Transport-agnostic on purpose: `stream_batch` wraps this in an
+    `EventSourceResponse`, and the e2e tests drive it directly (httpx's
+    `ASGITransport` buffers the whole response, so a live stream can't be
+    consumed through the test client while a worker concurrently produces
+    NOTIFYs).
+
+    Sequence: `open` → zero-or-more `result` (one per completed eval case) →
+    `done`. `ping` keeps the connection alive through proxy idle timeouts.
+    """
+    channel = _batch_channel(batch_id)
+    # Raw asyncpg connection: SQLAlchemy's async API doesn't expose LISTEN.
+    raw = await engine.raw_connection()
+    try:
+        asyncpg_conn: Any = raw.driver_connection
+        assert asyncpg_conn is not None, "raw_connection has no driver_connection"
+        events: asyncio.Queue[str] = asyncio.Queue()
+
+        def _on_notify(_conn: object, _pid: int, _channel: str, payload: str) -> None:
+            events.put_nowait(payload)
+
+        await asyncpg_conn.add_listener(channel, _on_notify)
         try:
-            asyncpg_conn: Any = raw.driver_connection
-            assert asyncpg_conn is not None, "raw_connection has no driver_connection"
-            queue: asyncio.Queue[str] = asyncio.Queue()
+            yield {"event": "open", "data": json.dumps({"batch_id": str(batch_id)})}
 
-            def _on_notify(_conn: object, _pid: int, _channel: str, payload: str) -> None:
-                queue.put_nowait(payload)
-
-            await asyncpg_conn.add_listener(channel, _on_notify)
-            try:
+            # Fast-batch race: a batch can finish before the client subscribes
+            # (runs often complete in well under a second). Without this check the
+            # client would sit on a now-silent channel until the 30s heartbeat and
+            # never learn the batch is done. add_listener runs first, so if the
+            # batch is *not* yet terminal here, any concurrent completing NOTIFY is
+            # already captured in `events` and handled by the loop below.
+            status = await asyncpg_conn.fetchval(
+                "SELECT status FROM eval_batches WHERE id = $1", batch_id
+            )
+            if status in _TERMINAL_STATUSES:
                 yield {
-                    "event": "open",
-                    "data": json.dumps({"batch_id": str(batch.id)}),
+                    "event": "done",
+                    "data": json.dumps({"batch_id": str(batch_id), "status": status}),
                 }
-                while True:
-                    try:
-                        payload = await asyncio.wait_for(queue.get(), timeout=30.0)
-                    except TimeoutError:
-                        # SSE clients (and proxies) drop on long silences. Heartbeat.
-                        yield {"event": "ping", "data": "{}"}
-                        continue
-                    yield {"event": "result", "data": payload}
-                    # If the batch flipped to done, emit a final event and stop.
-                    try:
-                        parsed = json.loads(payload)
-                        if (
-                            parsed.get("completed") is not None
-                            and parsed.get("total") is not None
-                            and parsed["completed"] >= parsed["total"]
-                        ):
-                            yield {"event": "done", "data": payload}
-                            return
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-            finally:
-                await asyncpg_conn.remove_listener(channel, _on_notify)
-        finally:
-            raw.close()
+                return
 
-    return EventSourceResponse(_events())
+            while True:
+                try:
+                    payload = await asyncio.wait_for(events.get(), timeout=30.0)
+                except TimeoutError:
+                    # SSE clients (and proxies) drop on long silences. Heartbeat.
+                    yield {"event": "ping", "data": "{}"}
+                    continue
+                yield {"event": "result", "data": payload}
+                # If the batch flipped to done, emit a final event and stop.
+                try:
+                    parsed = json.loads(payload)
+                    if (
+                        parsed.get("completed") is not None
+                        and parsed.get("total") is not None
+                        and parsed["completed"] >= parsed["total"]
+                    ):
+                        yield {"event": "done", "data": payload}
+                        return
+                except (json.JSONDecodeError, TypeError):
+                    continue
+        finally:
+            await asyncpg_conn.remove_listener(channel, _on_notify)
+    finally:
+        raw.close()

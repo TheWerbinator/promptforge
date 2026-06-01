@@ -8,16 +8,21 @@ just called directly).
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import json
 from typing import Any
+from uuid import UUID
 
 import pytest
 from httpx import AsyncClient
 
-from promptforge_api.core.db import get_session_factory
+from promptforge_api.api.v1.evals import eval_event_stream
+from promptforge_api.core.db import get_engine, get_session_factory
 from promptforge_api.core.queue import Queue
 from promptforge_api.services import llm as llm_service
 from promptforge_api.services.llm import LLMResponse
-from promptforge_api.workers.eval_worker import _run_one
+from promptforge_api.workers.eval_worker import _consume_forever, _run_one
 
 pytestmark = [pytest.mark.e2e, pytest.mark.asyncio]
 
@@ -64,6 +69,55 @@ async def _drain_queue(kind: str = "eval_case", *, max_iterations: int = 20) -> 
             return
         for job in jobs:
             await _run_one(job)
+
+
+async def _run_next_job(kind: str = "eval_case") -> int:
+    """Claim and run a single queued job. Returns how many ran (0 or 1).
+
+    Lets a test advance a batch one case at a time so the SSE stream can be
+    observed mid-flight (before the batch reaches its terminal state)."""
+    queue = Queue(get_session_factory())
+    jobs = await queue.claim(kind, limit=1)
+    for job in jobs:
+        await _run_one(job)
+    return len(jobs)
+
+
+async def _make_two_case_batch(client: AsyncClient, h: dict[str, str]) -> str:
+    """Prompt + version + suite + two passing cases + run. Returns the batch id."""
+    prompt = (
+        await client.post(
+            "/api/v1/prompts",
+            headers=h,
+            json={
+                "name": "greet",
+                "body": "Greet {{name}}",
+                "variables": [{"name": "name", "type": "str"}],
+            },
+        )
+    ).json()
+    version_id = prompt["latest_version"]["id"]
+    suite = (
+        await client.post(
+            "/api/v1/eval-suites",
+            headers=h,
+            json={"name": "greet-quality", "judge_default": "contains"},
+        )
+    ).json()
+    for name in ("Jake", "Casey"):
+        await client.post(
+            f"/api/v1/eval-suites/{suite['id']}/cases",
+            headers=h,
+            json={"inputs": {"name": name}, "expected": {"value": "hello"}},
+        )
+    batch = (
+        await client.post(
+            f"/api/v1/eval-suites/{suite['id']}/run",
+            headers=h,
+            json={"version_ids": [version_id]},
+        )
+    ).json()
+    return str(batch["id"])
 
 
 async def test_create_suite_add_cases_run_batch_persists_results(
@@ -245,3 +299,158 @@ async def test_failed_llm_call_still_records_failed_result(
     assert len(detail["results"]) == 1
     assert detail["results"][0]["passed"] is False
     assert "run failed" in (detail["results"][0]["judge_reasoning"] or "")
+
+
+# ----- SSE stream (phase 12) -----------------------------------------------------------
+#
+# httpx's ASGITransport buffers the entire response before returning, so a live
+# SSE stream can't be consumed through `api_client` while the worker concurrently
+# produces NOTIFYs — the app would block forever waiting for events the test can't
+# send. These tests drive the transport-agnostic `eval_event_stream` generator
+# directly against the real Postgres LISTEN/NOTIFY channel instead. The HTTP layer
+# (routing + EventSourceResponse wrapping) is covered by the already-done test,
+# which is safe through ASGITransport because that generator returns immediately.
+
+
+async def test_stream_forwards_live_result_and_done_events(
+    api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(llm_service, "call_llm", _stub_call_llm("hello world"))
+    auth = await _signup(api_client)
+    h = _h(auth["access_token"])
+    batch_id = await _make_two_case_batch(api_client, h)
+
+    stream = eval_event_stream(get_engine(), UUID(batch_id))
+    try:
+        # Pull `open` first: this guarantees the LISTEN is registered before any
+        # NOTIFY is produced, so we can't miss an event to a subscribe-vs-emit race.
+        opened = await stream.__anext__()
+        assert opened["event"] == "open"
+
+        # Finish one case → exactly one `result` event, batch still in progress.
+        assert await _run_next_job() == 1
+        first = await asyncio.wait_for(stream.__anext__(), timeout=15.0)
+        assert first["event"] == "result"
+        assert json.loads(first["data"])["completed"] == 1
+
+        # Finish the rest → final `result` then a terminal `done`.
+        await _drain_queue()
+        second = await asyncio.wait_for(stream.__anext__(), timeout=15.0)
+        assert second["event"] == "result"
+        done = await asyncio.wait_for(stream.__anext__(), timeout=15.0)
+        assert done["event"] == "done"
+        done_payload = json.loads(done["data"])
+        assert done_payload["completed"] == 2
+        assert done_payload["total"] == 2
+    finally:
+        await stream.aclose()
+
+
+async def test_stream_short_circuits_when_batch_already_done(
+    api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(llm_service, "call_llm", _stub_call_llm("hello world"))
+    auth = await _signup(api_client)
+    h = _h(auth["access_token"])
+    batch_id = await _make_two_case_batch(api_client, h)
+
+    # Batch finishes before anyone subscribes (the fast-batch race).
+    await _drain_queue()
+
+    stream = eval_event_stream(get_engine(), UUID(batch_id))
+
+    async def _collect() -> list[dict[str, Any]]:
+        return [event async for event in stream]
+
+    events = await asyncio.wait_for(_collect(), timeout=15.0)
+    # No live result events to forward — just open then an immediate done, so the
+    # client isn't left hanging on a now-silent channel until the heartbeat.
+    assert [e["event"] for e in events] == ["open", "done"]
+    assert json.loads(events[-1]["data"])["status"] == "done"
+
+
+async def test_stream_endpoint_serves_sse_over_http(
+    api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end through the real route + EventSourceResponse. Uses an
+    already-done batch so the generator returns promptly (ASGITransport buffers
+    the whole response, so a still-running stream would never return here)."""
+    monkeypatch.setattr(llm_service, "call_llm", _stub_call_llm("hello world"))
+    auth = await _signup(api_client)
+    h = _h(auth["access_token"])
+    batch_id = await _make_two_case_batch(api_client, h)
+    await _drain_queue()
+
+    resp = await api_client.get(f"/api/v1/eval-batches/{batch_id}/stream", headers=h)
+
+    assert resp.status_code == 200
+    assert "text/event-stream" in resp.headers["content-type"]
+    assert "event: open" in resp.text
+    assert "event: done" in resp.text
+
+
+async def test_real_worker_consume_loop_drives_sse_stream(
+    api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Full chain: enqueue → real worker consume loop claims off the queue →
+    handler → committed NOTIFY → SSE subscriber receives live events.
+
+    The other SSE tests drive the handler in-process (`_run_one`/`_drain_queue`),
+    which proves the handler logic but NOT that the worker's claim/dispatch poll
+    loop wires up correctly. This runs the actual `_consume_forever` loop against
+    the real queue. (True subprocess boot + SIGINT/SIGTERM handling is left to the
+    Phase 16 deploy smoke — that's process plumbing, not application logic.)"""
+    monkeypatch.setattr(llm_service, "call_llm", _stub_call_llm("hello world"))
+    auth = await _signup(api_client)
+    h = _h(auth["access_token"])
+    batch_id = await _make_two_case_batch(api_client, h)  # jobs are now queued
+
+    stream = eval_event_stream(get_engine(), UUID(batch_id))
+    try:
+        # Subscribe before the worker runs so we can't miss the live events.
+        opened = await stream.__anext__()
+        assert opened["event"] == "open"
+
+        stop = asyncio.Event()
+        worker = asyncio.create_task(_consume_forever(Queue(get_session_factory()), stop))
+
+        events: list[dict[str, Any]] = []
+
+        async def _collect_until_done() -> None:
+            async for event in stream:
+                events.append(event)
+                if event["event"] == "done":
+                    return
+
+        try:
+            await asyncio.wait_for(_collect_until_done(), timeout=20.0)
+        finally:
+            stop.set()
+            worker.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await worker
+
+        kinds = [e["event"] for e in events]
+        assert kinds.count("result") == 2
+        assert kinds[-1] == "done"
+        assert json.loads(events[-1]["data"])["completed"] == 2
+    finally:
+        await stream.aclose()
+
+
+async def test_stream_cross_org_batch_returns_404(
+    api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(llm_service, "call_llm", _stub_call_llm("hello world"))
+
+    # Org A owns the batch.
+    a = await _signup(api_client, email="sa@example.com")
+    a_batch = await _make_two_case_batch(api_client, _h(a["access_token"]))
+
+    # Org B must not be able to stream it — tenancy returns 404, never 403.
+    api_client.cookies.clear()
+    b = await _signup(api_client, email="sb@example.com")
+    resp = await api_client.get(
+        f"/api/v1/eval-batches/{a_batch}/stream", headers=_h(b["access_token"])
+    )
+    assert resp.status_code == 404
