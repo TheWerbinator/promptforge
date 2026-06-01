@@ -45,7 +45,7 @@
 
 Two processes share a single Docker image: `api` (uvicorn) and `worker` (queue consumer). Multi-tenant API powering prompt management, version-aware execution, eval orchestration, and the job queue.
 
-**Stack:** FastAPI · SQLAlchemy 2.x async · Alembic (async-mode using asyncpg, no sync driver) · Postgres 16 + pgvector · Pydantic v2 · python-jose (JWT HS256) · argon2-cffi · litellm · uv · ruff · mypy strict · pytest · testcontainers-postgres.
+**Stack:** FastAPI · SQLAlchemy 2.x async · Alembic (async-mode using asyncpg, no sync driver) · Postgres 17 + pgvector (Neon managed) · Pydantic v2 · python-jose (JWT HS256) · argon2-cffi · litellm · uv · ruff · mypy strict · pytest · testcontainers-postgres.
 
 **Internal modules (training-repo DNA):**
 - `core/config.py` — pydantic-settings
@@ -109,10 +109,23 @@ Demo mode (pending phase 13): `POST /demo/login` issues a read-only JWT for the 
 - **E2E** — full ASGI app + testcontainers Postgres + per-test truncate. Bound to the app via FastAPI `app.dependency_overrides[get_session]` rather than mutating the module-global engine (avoids cross-test flake on engine dispose races).
 - **Tenancy** — shared `tests/tenancy/_helpers.make_two_orgs` produces two signed-in users in distinct orgs. Each protected resource gets its own `test_*_tenancy.py` contract.
 
+## Hosting
+
+| Component | Where |
+|---|---|
+| `apps/api` (api + worker processes) | Fly.io, region `ord`, shared-cpu-1x / 512MB each |
+| Postgres 17 + pgvector | Neon managed (AWS us-east-1), connected via direct (session-mode) endpoint |
+| Future: `apps/ragent` | Fly.io, same region |
+| Future: `apps/web` | Vercel |
+
+Fly's `[deploy] release_command = "alembic upgrade head"` runs migrations on a temp machine before traffic shifts; failed migrations abort the deploy with old machines still serving.
+
+The DSN normalizer in [`promptforge_api/core/config.py`](../apps/api/promptforge_api/core/config.py) (`Settings.async_database_url`) accepts any provider's DSN shape — bare `postgresql://`, old-style `postgres://`, with or without `sslmode` query param — and rewrites it to `postgresql+asyncpg://` with `ssl=` for asyncpg compatibility.
+
 ## Local development
 
 ```sh
 docker compose -f infra/compose.yml up --wait
 ```
 
-Brings up Postgres + a one-shot `api-migrate` (runs `alembic upgrade head`) + the api process. See `infra/compose.yml`. Demo flow lands in phase 13; deploy in phase 16.
+Brings up Postgres 17 + a one-shot `api-migrate` (runs `alembic upgrade head`) + the api service. See `infra/compose.yml`. Production deploy runbook: [`DEPLOY.md`](DEPLOY.md).

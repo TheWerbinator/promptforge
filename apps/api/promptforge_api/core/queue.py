@@ -92,9 +92,12 @@ class Queue:
                     },
                 )
             ).scalar_one()
+            # pg_notify() is the function form — supports bound params. The
+            # NOTIFY statement form does NOT, because it's a utility command,
+            # not DML, and doesn't traverse the prepared-statement layer.
             await session.execute(
-                text(f"NOTIFY {NOTIFY_CHANNEL}, :msg"),
-                {"msg": f"job_enqueued:{kind}"},
+                text("SELECT pg_notify(:channel, :msg)"),
+                {"channel": NOTIFY_CHANNEL, "msg": f"job_enqueued:{kind}"},
             )
             await session.commit()
             return int(row)
@@ -228,7 +231,9 @@ async def notify_batch(engine: AsyncEngine, batch_id: UUID, event: dict[str, Any
     if len(payload) > 7800:  # NOTIFY caps at 8000; leave headroom
         raise ValueError("batch notify payload too large; fetch full data via GET")
     async with engine.begin() as conn:
-        await conn.execute(text(f"NOTIFY {channel}, :p"), {"p": payload})
+        await conn.execute(
+            text("SELECT pg_notify(:c, :p)"), {"c": channel, "p": payload}
+        )
 
 
 def _batch_channel(batch_id: UUID) -> str:

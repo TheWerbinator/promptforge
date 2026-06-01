@@ -68,7 +68,7 @@ def pg_container() -> Iterator["PostgresContainer"]:
     pytest.importorskip("testcontainers.postgres")
     from testcontainers.postgres import PostgresContainer
 
-    with PostgresContainer("postgres:16-alpine", driver="asyncpg") as container:
+    with PostgresContainer("postgres:17-alpine", driver="asyncpg") as container:
         yield container
 
 
@@ -137,8 +137,8 @@ async def api_client(
     # cross-test failures when one test's dispose raced another's pool.
     test_engine = create_async_engine(pg_url, future=True)
     truncate_sql = (
-        "TRUNCATE jobs, prompt_versions, prompts, refresh_tokens, api_keys, "
-        "memberships, orgs, users RESTART IDENTITY CASCADE"
+        "TRUNCATE runs, jobs, prompt_versions, prompts, refresh_tokens, "
+        "api_keys, memberships, orgs, users RESTART IDENTITY CASCADE"
     )
     async with test_engine.begin() as conn:
         await conn.execute(text(truncate_sql))

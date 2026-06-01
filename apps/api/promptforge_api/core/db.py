@@ -25,7 +25,7 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 def _build_engine() -> AsyncEngine:
     settings = get_settings()
     return create_async_engine(
-        settings.database_url.get_secret_value(),
+        settings.async_database_url(),
         pool_pre_ping=True,
         pool_size=10,
         max_overflow=20,

@@ -235,3 +235,49 @@ The retry decorator catches its allowed exceptions and retries; `call_llm` needs
 ## Why catch raw `Exception` after the retryable tuple?
 
 Defense in depth. The retryable tuple covers known litellm exceptions; an unforeseen exception type (litellm upgrade, a third-party middleware, asyncpg connection thrash if the LLM call somehow used the DB) should still surface as a clean `LLMCallError` with the underlying type named, not propagate as an opaque traceback to the route handler.
+
+# Phase 10 — Runs
+
+## Why persist failed Runs instead of just returning the error to the caller?
+
+Three reasons. (1) The Runs dashboard needs error rates — "why is my eval at 70% pass" is a real question that requires durable failure rows. (2) An LLM call that costs money and timed out should still be visible to the org so they can investigate, not silently vanish from the record. (3) A 4xx provider error (model down, bad request) is debugging info; throwing it away to keep the table "clean" loses signal. The route returns 201 with `error` populated and `output: null`; the row exists.
+
+## Why `Numeric(12, 6)` for `cost_usd` instead of float?
+
+Per-token costs are fractions of a cent — `text-embedding-3-small` is ~$0.00002 per call. Float drift on aggregation across thousands of runs would silently mis-bill. Numeric is exact. 12-digit precision with 6 after the decimal covers everything from $0.000001 to $999999.999999 USD, which spans every realistic per-run cost.
+
+## Why `Run.org_id` denormalized from `version.prompt.org_id`?
+
+So `TenantRepository[Run]` can scope by `org_id` directly without a 3-table join on every list/get. The denormalization is set once at insert time (after the route already resolves the version through the org-scoped prompt repo) and never updated — prompts don't move between orgs. Classic read-perf-vs-write-complexity tradeoff; in our access pattern, runs are read 100× more than written.
+
+## Why demo accounts must BYOK to run prompts?
+
+The hosted OpenAI/Anthropic key on the server pays per token. A read-only demo seeded for hiring teams running 10 evals against `gpt-4o` would rack up real cost. BYOK pushes that cost to the visitor: paste your own key, get a real run, no harm to us. The 403 with a clear `detail` string tells the demo UI exactly what header to add — no guesswork.
+
+## Why `_provider_response` stored but not returned?
+
+The raw litellm response can be large (tens of KB on long completions) and contains provider-specific fields nobody outside debugging needs. The `RunResponse` schema deliberately omits it; storing keeps it available for forensic queries (`SELECT provider_response FROM runs WHERE id = ?` from psql) without bloating every API payload.
+
+## Why `pg_notify()` instead of the `NOTIFY` statement?
+
+Postgres's `NOTIFY` is a utility command, not DML — it bypasses the prepared-statement layer, which means parameter binding (`:msg`) doesn't work. `pg_notify(channel text, payload text)` is the function form; it goes through normal parameter binding, plays nicely with SQLAlchemy's `text(...)` + parameters pattern, and protects against payload injection. Caught by integration tests; phase-8 had been shipping with broken enqueue NOTIFY.
+
+# Phase 10.5 — Deploy infrastructure
+
+## Why Postgres 17 instead of 16 or 18?
+
+17 is the latest stable that's been out long enough (~21 months) for every extension I care about — pgvector, asyncpg, alembic — to ship tested wheels. 18 has been out ~9 months: mostly enough but introduces a small "first to hit a rough edge" risk I don't need on portfolio infra. 16 was where I started for habit reasons; the bump cost nothing and matches the latest-LTS rule I follow on every other dependency.
+
+## Why Neon over Fly Managed Postgres or Supabase?
+
+Managed Postgres without the $38/month Fly MPG floor. Neon's free tier (0.5 GB, 100 CU-hr/month) covers demo-scale data with room to spare. pgvector is enabled by default so ragent retrieval has no extension-install friction. **Database branching** is the differentiator: I can branch the prod database for migration testing without standing up a staging copy — that's a real engineering capability, not just a cost decision. Trade is +10–30 ms cross-cloud latency vs same-region Fly Postgres; acceptable because every request path is dominated by ≥500 ms LLM calls, so the DB hop is noise.
+
+Fly's unmanaged Postgres (`fly postgres create`) is cheaper still but Fly explicitly tells you they don't support it — you own backups, point-in-time restore, upgrades, disk-full handling. For portfolio infra that's the wrong place to take on operational risk. Supabase would also work but uses transaction-mode PgBouncer on its default port, which breaks asyncpg's prepared-statement cache; Neon exposes a direct (session-mode) endpoint without that footgun.
+
+## Why a DSN normalizer in `Settings` (not just "set the right env var")?
+
+Provider DSNs (Neon, Fly Postgres, Heroku, Supabase) hand you bare `postgresql://` or even older `postgres://` schemes. SQLAlchemy parses those as psycopg2-default, which is the sync driver this app deliberately doesn't ship — first call into the DB fails with `ModuleNotFoundError: psycopg2`. Normalizing the scheme + `sslmode → ssl` (asyncpg's param name) in one place means any provider DSN works without manual editing per-deploy. Defensive against the most common DSN-from-cloud-provider footgun. Unit-tested against five real-world DSN shapes.
+
+## Why two Fly machines (api + worker) instead of one process running both?
+
+Separation of concerns + independent scaling. The api machine auto-stops to zero on idle (cheap demo cost). The worker runs continuously polling the queue; if it crashed under load, the api machine would still serve reads. Same Docker image, two `[processes]` entries in `fly.toml` — one image, two scale dials. Cost: ~$4.65/mo for both at shared-cpu-1x; the worker can be scaled to zero (`fly scale count worker=0`) until the eval engine lands in phase 11.
