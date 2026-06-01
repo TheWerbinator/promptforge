@@ -30,7 +30,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 NOTIFY_CHANNEL = "jobs"
 
@@ -222,16 +222,6 @@ class Queue:
                 await asyncio.sleep(poll_interval_ms / 1000)
 
         yield _stream()
-
-
-async def notify_batch(engine: AsyncEngine, batch_id: UUID, event: dict[str, Any]) -> None:
-    """Emit a small status event on the batch's channel for SSE subscribers."""
-    channel = _batch_channel(batch_id)
-    payload = json.dumps(event)
-    if len(payload) > 7800:  # NOTIFY caps at 8000; leave headroom
-        raise ValueError("batch notify payload too large; fetch full data via GET")
-    async with engine.begin() as conn:
-        await conn.execute(text("SELECT pg_notify(:c, :p)"), {"c": channel, "p": payload})
 
 
 def _batch_channel(batch_id: UUID) -> str:

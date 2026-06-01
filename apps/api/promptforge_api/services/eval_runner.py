@@ -104,8 +104,12 @@ async def run_eval_case(
                 {"id": batch.id},
             )
 
-        await session.commit()
-
+        # NOTIFY must be enqueued *inside* the transaction that commits the result
+        # and progress bump: pg_notify is transactional, so notifications only fire
+        # on COMMIT and are discarded on rollback. Emitting it after commit() (in a
+        # fresh, never-committed transaction) silently dropped every SSE event.
+        # Keeping it before commit also means a subscriber is never woken to read
+        # data that isn't durable yet.
         await _notify(
             session,
             batch.id,
@@ -119,6 +123,8 @@ async def run_eval_case(
                 "total": batch.total_jobs,
             },
         )
+
+        await session.commit()
 
 
 async def _execute_run(

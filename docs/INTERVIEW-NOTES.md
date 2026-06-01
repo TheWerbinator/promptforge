@@ -325,3 +325,29 @@ The worker subprocess does two things: signal handling + an infinite poll loop. 
 The api routes use `get_session_factory()` directly for the queue enqueue (because the queue lives outside the request transaction). That returns the module-global lazy engine, not the per-test override. Across tests, the global engine accumulated asyncpg connections bound to event loops that pytest-asyncio had since closed. On teardown, asyncpg tried to gracefully close those connections via `asyncio.create_task`, which raised "Event loop is closed."
 
 Fix: dispose the global engine at the end of each `api_client` fixture along with the per-test engine. The next test rebuilds the global lazily on first access. Stable across runs.
+
+# Phase 12 — Eval e2e + SSE coverage
+
+## Why does `pg_notify` have to fire inside the committing transaction?
+
+`pg_notify` (and `NOTIFY`) is transactional: Postgres only delivers the notification when the transaction that issued it commits, and discards it on rollback. The eval runner was calling `_notify` *after* `session.commit()`, which started a fresh transaction that the session then closed without committing — so every SSE event was silently dropped. Phase 11's tests only polled the batch-detail endpoint, never subscribed to the live channel, so the bug shipped invisibly. The fix moves the NOTIFY before the commit, into the same transaction as the result upsert and progress bump. That's also more correct semantically: a subscriber is never woken to read data that isn't durable yet.
+
+## Why extract the SSE event loop into a standalone generator instead of testing the HTTP endpoint?
+
+httpx's `ASGITransport` buffers the entire response — it runs the ASGI app to completion before returning a `Response`. A live SSE stream never "completes" until the batch is done, and the batch can't finish until the worker runs, which the test can only trigger *after* the client call returns. That's a deadlock: you can't consume a still-streaming SSE response through the test client. Extracting the loop into `eval_event_stream(engine, batch_id)` lets the test drive the real generator against the real Postgres LISTEN/NOTIFY channel, advancing the batch one case at a time and asserting each `result` event arrives before the terminal `done`. The thin HTTP wrapper (route + `EventSourceResponse`) is covered separately with an already-done batch, where the generator returns promptly and ASGITransport's buffering is fine.
+
+## Why a terminal short-circuit when a client subscribes to an already-finished batch?
+
+Eval runs can finish in well under a second, so a client that subscribes a moment too late would attach to a channel that has already gone silent — and then sit there until the 30s heartbeat with no signal that the batch is done. On subscribe, after registering the LISTEN, the generator reads the batch status once; if it's already `done`/`failed` it emits `open` then `done` and closes. The LISTEN is registered *before* the status read, so if the batch is not yet terminal at that point, any concurrent completing NOTIFY is already queued and handled by the normal loop — no event can slip through the gap.
+
+## Why register the LISTEN before producing any NOTIFY in the live test?
+
+NOTIFY has no backlog for connections that subscribe later — a notification fired before a connection issues `LISTEN` is gone. The live test pulls the generator's first `open` event (which is yielded only after `add_listener` runs) before draining any jobs, guaranteeing the subscription is active. Without that ordering the test would be racy: the worker could finish and notify before the SSE connection subscribed, and the assertion would flake.
+
+## Why a test that runs the real worker consume loop, not just the handler?
+
+Calling the handler in-process (`_run_one(job)`) proves the eval logic but not that the worker's queue-claim/dispatch loop is wired correctly — wrong `kind` registration, a broken `consume()` poll, or a claim-query bug would all pass a handler-only test. One e2e test starts the actual `_consume_forever` loop against the real queue, enqueues jobs through the API, and asserts an SSE subscriber receives the live events the worker produces. That exercises queue → claim → handler → committed NOTIFY → SSE as one chain. True subprocess boot and SIGINT/SIGTERM handling are deliberately left to the Phase 16 deploy smoke — that's process plumbing, not application logic, and an in-process task can't faithfully test signal delivery anyway.
+
+## Why delete `queue.notify_batch` instead of using it for the fix?
+
+It was dead (nothing called it) and it wrapped the NOTIFY in its own `engine.begin()` transaction — separate from the transaction that commits the eval result. That's the exact non-atomicity that caused the original bug: the notify could commit while the result write rolled back, or vice versa, waking a subscriber to read data that isn't there. The correct fix keeps the NOTIFY inside the result's own transaction, so leaving `notify_batch` around as a tempting "batch notify helper" was a footgun. Removed it rather than document a trap.

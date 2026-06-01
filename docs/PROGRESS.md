@@ -2,15 +2,15 @@
 
 > Single source of truth for "where we are." Updated at the end of every phase per [feedback-phase-wrap]. If you're a fresh chat picking this up, read the **Bootstrap** section at the bottom first.
 
-**Current position:** apps/api Phase 11 DONE — eval engine landed (suite + case CRUD, batch run, all 4 judges, queue-driven worker handler, SSE stream endpoint). **193 tests pass** end-to-end (3× consecutive, no flake after fixing global-engine leak in test fixture). Fly worker scaled back to 1 (`fly scale count worker=1`); ready for prod eval batches once Phase 11 commit lands and `fly deploy` runs. Next: Phase 12 (eval e2e against real Fly + screenshot dashboard) → Phase 13 (demo mode).
+**Current position:** apps/api Phase 12 DONE — eval e2e + SSE stream coverage landed (incl. a real-worker consume-loop test), and a real notify bug was caught and fixed in the process. The SSE event generator was extracted from the route into a transport-agnostic `eval_event_stream(engine, batch_id)` (httpx's ASGITransport buffers the whole response, so a live SSE stream can't be consumed through the test client; tests drive the generator directly against real LISTEN/NOTIFY). Added a fast-batch terminal short-circuit (subscribe-after-done emits `open`+`done` instead of hanging on a silent channel until the 30s heartbeat). **Bug fixed:** `eval_runner._notify` emitted `pg_notify` *after* `session.commit()`, in a fresh never-committed transaction — pg_notify is transactional, so every SSE event was silently dropped (Phase 11 only polled batch detail, never the live channel, so it went unnoticed). Moved NOTIFY inside the committed transaction. **197 tests pass** end-to-end (full suite, Docker up). Next: Phase 13 (demo mode).
 
-**Fresh-chat bootstrap:** if you're picking this up cold, read this file's Bootstrap section at the bottom first. Short version: 11 of 17 apps/api phases done; api + Postgres live on Fly+Neon; ~6 more apps/api phases (12-17) then apps/ragent + apps/web. INTERVIEW-NOTES.md has 30+ defendable "Why" entries — read before any architecture conversation.
+**Fresh-chat bootstrap:** if you're picking this up cold, read this file's Bootstrap section at the bottom first. Short version: 12 of 17 apps/api phases done; api + Postgres live on Fly+Neon; ~5 more apps/api phases (13-17) then apps/ragent + apps/web. INTERVIEW-NOTES.md has 30+ defendable "Why" entries — read before any architecture conversation.
 
-**Last verified locally:** 2026-05-29 — 71 unit tests pass; ruff + format + mypy --strict clean across 26 source files. Integration/e2e (~70 tests) require Docker for testcontainers Postgres; not run today.
+**Last verified locally:** 2026-06-01 — full suite **198 passed** (193 prior + 5 new SSE/worker tests), no flake (eval-flow file run 3× consecutive); ruff + ruff format + mypy --strict clean across 40 source files. Full suite needs Docker for testcontainers Postgres (was up).
 
 ---
 
-## apps/api — 7 / 17 phases done (~41%)
+## apps/api — 12 / 17 phases done (~71%)
 
 - [x] **Phase 1 — Bootstrap.** repo init, pyproject (uv + hatchling), FastAPI hello, `/health`, Dockerfile, fly.toml, CI skeleton.
 - [x] **Phase 2 — DB + Alembic.** Async SQLAlchemy 2.x, naming convention, async-mode Alembic via asyncpg only (no separate sync driver). Models: User, Org, Membership, OrgRole. Migration `20260523_0001`.
@@ -27,7 +27,7 @@
 
 - [x] **Phase 10.5 — DEPLOY SMOKE.** *Done 2026-06-01.* Decisions locked: Neon free tier over Fly MPG ($38/mo floor) / unmanaged Fly Postgres (no support) / Supabase (PgBouncer footgun). Postgres 17 across testcontainers + compose + prod. `Settings.async_database_url()` normalizer handles bare `postgresql://`, `postgres://`, and `sslmode` → `ssl` rewriting so any provider DSN works (unit-tested w/ 5 DSN shapes). Dockerfile: added `README.md` to early COPY so hatchling validates during `uv sync`. Two Fly machines provisioned (`api` + `worker`); worker can scale to 0 via `fly scale count worker=0` until Phase 11 — effective demo cost under $0.50/mo. **Smoke validated end-to-end against `https://promptforge-api.fly.dev`:** /health, /openapi.json, /docs, signup, /me, prompt create, run (the run without BYOK proved the failed-run-persists-with-error design works in prod). *TODO: screenshot /docs for README header.*
 - [x] **Phase 11 — Eval engine.** EvalSuite/EvalCase/EvalBatch/EvalResult models w/ unique(batch, version, case) for idempotent re-runs, migration `0006`. Four judges (`services/judge.py`): exact (whitespace-trimmed), contains (case_sensitive flag), regex (re.IGNORECASE/MULTILINE/DOTALL flags), llm_judge (separate LLM call w/ rubric, JSON-only response, threshold default 0.7, clamped to [0,1]). `services/eval_runner.py` orchestrates per-job execution: render template → call_llm (failed-run pattern preserved) → grade → upsert EvalResult via `ON CONFLICT` → atomic completed_jobs increment → pg_notify on batch channel. Routes (`api/v1/evals.py`): POST suite, POST cases, POST run (enqueues version × case jobs onto Postgres queue), GET batch detail, **GET /eval-batches/{id}/stream** SSE endpoint using asyncpg `add_listener` on the batch channel with heartbeat + done event. Worker handler wired (`kind=eval_case` → `run_eval_case`). 14 unit tests for judges (incl. LLM-judge mocked w/ threshold + clamp + non-JSON + call-failure paths), 4 e2e batch tests w/ in-process worker drain. Added `sse-starlette` dep. Also fixed test conftest leaking the module-global asyncpg engine across tests.
-- [ ] **Phase 12 — Eval e2e.** Full flow test: create suite → run → SSE events → batch done.
+- [x] **Phase 12 — Eval e2e.** *Done 2026-06-01.* Extracted the SSE event loop from `stream_batch` into a module-level, transport-agnostic `eval_event_stream(engine, batch_id)` generator (testable seam — see INTERVIEW-NOTES "Why test the SSE generator directly"). Added a terminal short-circuit: on subscribe, if the batch is already `done`/`failed`, emit `open`+`done` and close (fixes a fast-batch race where a client connecting after completion would sit on a silent channel until the 30s heartbeat). **5 new e2e tests:** live forward path (interleaved drain so `result` events stream before the terminal flip), already-done short-circuit, full HTTP-stack SSE through the real route + EventSourceResponse, cross-org stream → 404, **and a real-worker test that runs `_consume_forever` against the queue → handler → committed NOTIFY → SSE subscriber** (closes the [feedback-test-directness] gap: the other tests drive the handler in-process via `_run_one`, which doesn't exercise the worker's claim/dispatch loop). **Fixed a latent notify bug:** `eval_runner._notify` ran `pg_notify` after `session.commit()` in an uncommitted transaction → SSE events never delivered; moved NOTIFY inside the committed transaction. **Removed dead `queue.notify_batch`** — unused, and it used a separate `engine.begin()` transaction (the non-atomic anti-pattern we just moved away from). 198 tests pass. *TODOs (Jake-gated): (1) screenshot Swagger `/docs` for README header — needs server run + capture (carries from Phase 10.5; dashboard screenshot waits on apps/web). (2) After next Fly deploy, smoke the SSE stream against real prod — current prod runs the broken pre-fix notify.*
 - [ ] **Phase 13 — Demo mode.** `/demo/login`, role enforcement, BYOK header, slowapi rate-limit. Refresh-token reaper (see TODOs).
 - [ ] **Phase 14 — Public share.** ShareToken model + `/public/share/{token}`.
 - [ ] **Phase 15 — Seed.** `scripts/seed_demo.py` idempotent demo data.
@@ -64,10 +64,11 @@ Grep `TODO(phase-` to refresh:
 
 ## Code health snapshot
 
-- **26 source files**, ~880 statements.
-- **141 tests written** (71 unit + 6 integration models + 8 tenancy + ~56 e2e — last full run was on prior session, today only unit verified).
-- **Coverage:** 81% project; `core/prompts.py` 100%; `core/security.py` 100%; `core/async_utils.py` brand-new, expected high.
-- **CI workflow:** `.github/workflows/api.yml` — split into unit (3.11/3.12 matrix) + integration (testcontainers).
+- **40 source files.**
+- **198 tests pass** (full suite, Docker up — 2026-06-01). Unit + integration (testcontainers models/queue) + tenancy + e2e (auth/prompts/runs/evals incl. SSE).
+- ruff + ruff format + mypy --strict clean across all 40 source files.
+- **CI workflow:** `.github/workflows/api.yml` — split into unit (3.11/3.12 matrix) + integration (testcontainers). CD: `deploy.yml` ships apps/api to Fly on green push to main (needs `FLY_API_TOKEN` repo secret set).
+- **Known deprecation (follow-up):** routes still use `status.HTTP_422_UNPROCESSABLE_ENTITY` (Starlette renamed it to `_UNPROCESSABLE_CONTENT`); warnings surface in pytest. Low-risk rename per [feedback-latest-lts]; not Phase 12 scope.
 
 ---
 
