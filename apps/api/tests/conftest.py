@@ -139,10 +139,17 @@ async def api_client(
     truncate_sql = (
         "TRUNCATE eval_results, eval_batches, eval_cases, eval_suites, "
         "runs, jobs, prompt_versions, prompts, refresh_tokens, "
-        "api_keys, memberships, orgs, users RESTART IDENTITY CASCADE"
+        "api_keys, demo_usage, memberships, orgs, users RESTART IDENTITY CASCADE"
     )
     async with test_engine.begin() as conn:
         await conn.execute(text(truncate_sql))
+
+    # Reset the slowapi limiter's in-memory counters so per-test rate-limit state
+    # doesn't bleed across tests (the demo-login limit is keyed on a constant
+    # TestClient IP, so without this every test shares one bucket).
+    from promptforge_api.core.ratelimit import limiter
+
+    limiter.reset()
 
     session_factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
 

@@ -105,6 +105,15 @@ def require_role(
     return _check
 
 
+# Gate for any mutating route: owners and members can write; demo accounts are
+# read-only. Swap a route's `Depends(get_principal)` for this to both authorize
+# and get the principal in one dependency. The single-prompt run route is the one
+# intentional exception — it lets demo users run with their own provider key (and
+# a small free hosted-key quota), so it keeps `get_principal` and checks the role
+# itself.
+require_writer = require_role(OrgRole.OWNER, OrgRole.MEMBER)
+
+
 def get_repo(
     model: type[T],
 ) -> Callable[..., Awaitable[TenantRepository[T]]]:

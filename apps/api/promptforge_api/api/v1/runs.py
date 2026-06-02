@@ -13,10 +13,11 @@ from __future__ import annotations
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from promptforge_api.api.v1.prompts import _resolve_prompt_for_principal
+from promptforge_api.core.config import get_settings
 from promptforge_api.core.db import get_session
 from promptforge_api.core.deps import Principal, get_principal, get_repo
 from promptforge_api.core.prompts import (
@@ -24,9 +25,11 @@ from promptforge_api.core.prompts import (
     PromptValidationError,
     PromptVariable,
 )
+from promptforge_api.core.ratelimit import client_ip
 from promptforge_api.models import OrgRole, Prompt, PromptVersion, Run
 from promptforge_api.repositories import TenantRepository
 from promptforge_api.schemas.run import RunRequest, RunResponse
+from promptforge_api.services import demo as demo_service
 from promptforge_api.services import llm as llm_service
 
 versions_router = APIRouter(prefix="/versions", tags=["runs"])
@@ -41,6 +44,7 @@ runs_router = APIRouter(prefix="/runs", tags=["runs"])
 async def run_version(
     version_id: UUID,
     body: RunRequest,
+    request: Request,
     principal: Principal = Depends(get_principal),
     prompt_repo: TenantRepository[Prompt] = Depends(get_repo(Prompt)),
     run_repo: TenantRepository[Run] = Depends(get_repo(Run)),
@@ -52,13 +56,24 @@ async def run_version(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="version not found")
     await _resolve_prompt_for_principal(version.prompt_id, principal, prompt_repo)
 
-    # Demo users must BYOK — we don't burn the hosted key on read-only demo
-    # accounts. The header is the seam; if it's missing, 403 with a clear hint.
+    # Demo free-taste: a demo visitor without their own key gets a few real runs
+    # on the hosted key (per IP per day) before we ask them to bring their own.
+    # BYOK callers skip the quota entirely — it's their key and their bill.
+    demo_ip_hash: str | None = None
     if principal.role is OrgRole.DEMO and not x_provider_key:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            detail="demo accounts must provide an X-Provider-Key header to run prompts",
+        settings = get_settings()
+        demo_ip_hash = demo_service.ip_hash(client_ip(request))
+        remaining = await demo_service.free_runs_remaining(
+            session, demo_ip_hash, limit=settings.demo_free_runs
         )
+        if remaining <= 0:
+            raise HTTPException(
+                status.HTTP_402_PAYMENT_REQUIRED,
+                detail=(
+                    f"You've used all {settings.demo_free_runs} free demo runs for today. "
+                    "Add your own provider key via the X-Provider-Key header to keep going."
+                ),
+            )
 
     template = PromptTemplate(
         body=version.body,
@@ -114,6 +129,12 @@ async def run_version(
         error=error,
         created_by=principal.user_id,
     )
+
+    # Only count a free demo run when the hosted call actually succeeded — a
+    # failure on our key shouldn't eat the visitor's taste.
+    if demo_ip_hash is not None and error is None:
+        await demo_service.record_free_run(session, demo_ip_hash)
+
     return RunResponse.model_validate(run)
 
 

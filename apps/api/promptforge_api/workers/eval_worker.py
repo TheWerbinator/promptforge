@@ -16,9 +16,11 @@ import logging
 import signal
 from typing import Any
 
+from promptforge_api.core.config import get_settings
 from promptforge_api.core.db import get_session_factory
 from promptforge_api.core.queue import ClaimedJob, Queue
 from promptforge_api.services.eval_runner import run_eval_case
+from promptforge_api.services.maintenance import reap_expired_refresh_tokens
 
 log = logging.getLogger("promptforge.worker")
 
@@ -45,6 +47,25 @@ async def _consume_forever(queue: Queue, stop: asyncio.Event) -> None:
             await _run_one(job)
 
 
+async def _reaper_forever(stop: asyncio.Event) -> None:
+    """Periodically hard-delete refresh tokens past the retention window."""
+    settings = get_settings()
+    interval = settings.refresh_reaper_interval_hours * 3600
+    while not stop.is_set():
+        try:
+            async with get_session_factory()() as session:
+                deleted = await reap_expired_refresh_tokens(
+                    session, retention_days=settings.refresh_retention_days
+                )
+                await session.commit()
+                if deleted:
+                    log.info("reaped %d expired refresh tokens", deleted)
+        except Exception:
+            log.exception("refresh-token reaper failed; will retry next interval")
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+
+
 async def _run_one(job: ClaimedJob) -> None:
     handler = HANDLERS.get(job.kind)
     if handler is None:
@@ -69,12 +90,15 @@ async def main() -> None:
             loop.add_signal_handler(sig, stop.set)
 
     consumer = asyncio.create_task(_consume_forever(queue, stop))
+    reaper = asyncio.create_task(_reaper_forever(stop))
     log.info("eval_worker started; polling kind=eval_case")
     await stop.wait()
     log.info("eval_worker shutting down")
     consumer.cancel()
-    with contextlib.suppress(asyncio.CancelledError, Exception):
-        await consumer
+    reaper.cancel()
+    for task in (consumer, reaper):
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
 
 
 if __name__ == "__main__":
