@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from promptforge_api.core.config import get_settings
 from promptforge_api.core.db import get_session
-from promptforge_api.core.deps import Principal, get_principal, get_repo
+from promptforge_api.core.deps import Principal, get_principal, get_repo, require_writer
 from promptforge_api.core.security import (
     create_access_token,
     generate_api_key,
@@ -224,9 +224,9 @@ async def me(
 
 
 async def _revoke_chain(session: AsyncSession, chain_id: UUID) -> None:
-    # TODO(phase-13): pair with a periodic reaper that hard-deletes refresh
-    # tokens whose expires_at is older than ~90 days. The current table grows
-    # forever; fine for demo scale, not for prod.
+    # Revoked rows linger until they age out: services.maintenance.
+    # reap_expired_refresh_tokens (run periodically by the worker) hard-deletes
+    # tokens past the retention window, so the table doesn't grow forever.
     now = datetime.now(UTC)
     result = await session.execute(
         select(RefreshToken).where(
@@ -329,7 +329,7 @@ async def logout(
 )
 async def create_api_key(
     body: ApiKeyCreateRequest,
-    principal: Principal = Depends(get_principal),
+    principal: Principal = Depends(require_writer),
     repo: TenantRepository[ApiKey] = Depends(get_repo(ApiKey)),
 ) -> ApiKeyCreateResponse:
     if principal.auth != "jwt":
@@ -367,6 +367,7 @@ async def list_api_keys(
 @router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_api_key(
     key_id: UUID,
+    _writer: Principal = Depends(require_writer),
     repo: TenantRepository[ApiKey] = Depends(get_repo(ApiKey)),
 ) -> Response:
     row = await repo.get(key_id)

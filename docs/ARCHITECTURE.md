@@ -45,7 +45,7 @@
 
 Two processes share a single Docker image: `api` (uvicorn) and `worker` (queue consumer). Multi-tenant API powering prompt management, version-aware execution, eval orchestration, and the job queue.
 
-**Stack:** FastAPI · SQLAlchemy 2.x async · Alembic (async-mode using asyncpg, no sync driver) · Postgres 17 + pgvector (Neon managed) · Pydantic v2 · python-jose (JWT HS256) · argon2-cffi · litellm · uv · ruff · mypy strict · pytest · testcontainers-postgres.
+**Stack:** FastAPI · SQLAlchemy 2.x async · Alembic (async-mode using asyncpg, no sync driver) · Postgres 17 + pgvector (Neon managed) · Pydantic v2 · python-jose (JWT HS256) · argon2-cffi · litellm · slowapi (rate limiting) · sse-starlette · uv · ruff · mypy strict · pytest · testcontainers-postgres.
 
 **Internal modules (training-repo DNA):**
 - `core/config.py` — pydantic-settings
@@ -57,9 +57,9 @@ Two processes share a single Docker image: `api` (uvicorn) and `worker` (queue c
 - `core/queue.py` — *pending phase 8* — Postgres `SKIP LOCKED` queue + `LISTEN/NOTIFY` SSE fanout (sqlite-practice DNA reframed)
 - `repositories/base.py` — `TenantRepository[T]` generic; mandatory `org_id` scope; optional composed-after `where` kwarg; cross-org returns None (404, not 403)
 
-**Routes (current):** `/api/v1/auth/{signup,login,me,refresh,logout,api-keys}` · `/api/v1/prompts` CRUD + `/prompts/{id}/versions` + `/versions/{id}` · `/health`. OpenAPI at `/docs`.
+**Routes (current):** `/api/v1/auth/{signup,login,me,refresh,logout,api-keys}` · `/api/v1/demo/{login,quota}` · `/api/v1/prompts` CRUD + `/prompts/{id}/versions` + `/versions/{id}` · `/api/v1/versions/{id}/run` + `/runs/{id}` · `/api/v1/eval-suites` (+ cases, run) + `/eval-batches/{id}` + `/eval-batches/{id}/stream` (SSE) · `/health`. OpenAPI at `/docs`.
 
-**Routes (pending):** `/runs`, `/eval-suites`, `/eval-batches`, `/demo/login`, `/public/share/{token}`.
+**Routes (pending):** `/public/share/{token}`.
 
 ### apps/ragent — RAG + agent service *(not started)*
 
@@ -79,14 +79,15 @@ Next.js 15 App Router · React 19 · TypeScript strict · Tailwind · shadcn/ui 
 | `RefreshToken` | Single-use rotated session w/ chain-revocation replay defense | ✓ phase 3 |
 | `Prompt` | Per-org named prompt w/ tags + visibility | ✓ phase 5 |
 | `PromptVersion` | Append-only versioned body + variables jsonb | ✓ phase 5 |
-| `Job` | Postgres queue (SKIP LOCKED) | pending phase 8 |
-| `Run` | Single LLM execution record | pending phase 10 |
-| `EvalSuite`, `EvalCase`, `EvalBatch`, `EvalResult` | Eval orchestration | pending phase 11 |
+| `Job` | Postgres queue (SKIP LOCKED) | ✓ phase 8 |
+| `Run` | Single LLM execution record | ✓ phase 10 |
+| `EvalSuite`, `EvalCase`, `EvalBatch`, `EvalResult` | Eval orchestration | ✓ phase 11 |
+| `DemoUsage` | Per-IP daily free-run counter (HMAC'd IP) — abuse/cost control | ✓ phase 13 |
 | `ShareToken` | Public read-only links | pending phase 14 |
 | `Corpus`, `Document`, `Chunk` | ragent vector store (`embedding_1536` + `embedding_384` nullable cols) | pending |
 | `Conversation`, `Message` | Chat history | pending |
 
-All carry `org_id` and go through `TenantRepository`. Routes use the `get_repo(Model)` dependency factory; direct `session.execute` in routes is a code smell.
+Most carry `org_id` and go through `TenantRepository`. Exceptions are infrastructure tables: `Job` (internal queue) and `DemoUsage` (cross-org abuse control) deliberately sit outside tenancy. Routes use the `get_repo(Model)` dependency factory; direct `session.execute` in routes is a code smell.
 
 ## Auth flow
 
@@ -100,7 +101,7 @@ Signup ─► JWT access (15 min) + refresh cookie (30 days, httpOnly, SameSite=
                           Reuse of rotated refresh ─► revoke entire chain
 ```
 
-Demo mode (pending phase 13): `POST /demo/login` issues a read-only JWT for the seeded `Demo Corp` org. BYOK header lets demo users run LLM calls with their own key.
+Demo mode (phase 13): `POST /demo/login` issues a read-only JWT for the seeded `Demo Corp` org (no signup; rate-limited via slowapi). Demo is read-only everywhere except the single-run route — visitors get a small free hosted-key quota (`demo_free_runs`/IP/day, counted in `demo_usage` keyed by HMAC'd IP), then a 402 asks them to BYOK via the `X-Provider-Key` header. `GET /demo/quota` reports remaining free runs. Read-only enforced by the `require_writer` (owner/member) dependency on every mutating route.
 
 ## Test architecture
 

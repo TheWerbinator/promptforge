@@ -351,3 +351,33 @@ Calling the handler in-process (`_run_one(job)`) proves the eval logic but not t
 ## Why delete `queue.notify_batch` instead of using it for the fix?
 
 It was dead (nothing called it) and it wrapped the NOTIFY in its own `engine.begin()` transaction — separate from the transaction that commits the eval result. That's the exact non-atomicity that caused the original bug: the notify could commit while the result write rolled back, or vice versa, waking a subscriber to read data that isn't there. The correct fix keeps the NOTIFY inside the result's own transaction, so leaving `notify_batch` around as a tempting "batch notify helper" was a footgun. Removed it rather than document a trap.
+
+# Phase 13 — Demo mode
+
+## Why a free-run quota instead of "demo must always BYOK"?
+
+The whole point of a demo is to convert a skimming visitor into someone who *gets* the product — and nobody pastes an API key before they've seen value. So demo browses all seeded content for free, and gets a few real runs on our hosted key (default 5) before we ask for a key. That's the conversion funnel: taste first, key second. The cost risk that BYOK originally guarded against is handled by capping the free runs, not by removing them.
+
+## Why meter the free quota per client IP, not per demo session or globally?
+
+A global pool fails the product goal — the first visitor of the day drains it and everyone after sees zero free runs. Per-session is trivially farmable: log in again, fresh quota, infinite hosted-key spend. Per-IP is the right unit because the real risk is *cost*, and IP is the thing an attacker can't cheaply multiply. NAT means some genuine visitors share a bucket — acceptable for a portfolio demo, and the limit's a config knob. The same forwarded-IP key function backs both this quota and the slowapi login limit.
+
+## Why store a hash of the IP, not the raw address?
+
+The counter only needs to tell visitors apart and rate them — it never needs to *read* an IP back. Storing `HMAC(ip)` (keyed on the JWT secret, via the existing `hmac_token`) gives exact per-visitor counting with no raw client IPs at rest. Cheap privacy-by-design: a DB dump leaks no addresses, and the column is a fixed 64-char digest.
+
+## Why 402 Payment Required when the quota runs out, not 403?
+
+403 means "you may never do this" — it's what demo gets on a real write (creating a prompt). Quota exhaustion is different: "you *can* do this, you've just used the free allotment — here's how to continue." 402 carries that meaning and lets the frontend branch cleanly: 402 → show the BYOK key prompt; 403 → show the sign-up CTA. Reusing 403 for both would collapse two distinct UX paths.
+
+## Why a `require_writer` gate swapped onto each route, not one global middleware?
+
+Read-only is the demo's defining constraint, so enforcement has to be impossible to forget. A global ASGI middleware can't see the principal — auth resolves inside the dependency tree — so it'd have to re-decode the token, duplicating auth and special-casing the unauthenticated routes (login, signup, demo-login). Instead `require_writer` is a dependency that *replaces* `get_principal` on mutating routes: one swap both authorizes and yields the principal, it's visible at each call site, and every write route has a matching tenancy/role test. The single-prompt-run route is the one deliberate exception — it owns the demo free-quota/BYOK logic itself.
+
+## Why rate-limit `/demo/login` specifically?
+
+It's the one unauthenticated endpoint that does real work on every call: a DB lookup plus a refresh-token row insert plus JWT signing. Without a limit it's a cheap amplification target — hammer it to bloat the refresh-tokens table and burn CPU. slowapi caps it per IP (default 5/min). The rest of the API sits behind auth, so the abuse surface is the login itself. Storage is in-process memory, which is correct for a single api machine; scaling the api horizontally would mean pointing slowapi at Redis so the counters are shared.
+
+## Why is the refresh-token reaper in the worker, and why test the function not the loop?
+
+The reaper is a periodic side task, and the worker is already the long-lived process that owns background work — putting it there avoids standing up a separate scheduler. Per the test-directness rule, the interval loop is process plumbing (sleep, cancel on shutdown) and isn't worth a brittle timing test; the *logic* — "delete tokens past the retention window, keep the rest" — is a plain function with an integration test against real Postgres. Revoked/replaced tokens are kept until they age out so the chain-revocation audit trail survives for the retention window, then they're just dead rows.

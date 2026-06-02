@@ -6,6 +6,7 @@ every model on `Base.metadata`, which Alembic uses for autogeneration.
 
 from promptforge_api.models.api_key import ApiKey
 from promptforge_api.models.base import Base
+from promptforge_api.models.demo_usage import DemoUsage
 from promptforge_api.models.eval import (
     EvalBatch,
     EvalBatchStatus,
@@ -24,6 +25,7 @@ from promptforge_api.models.user import User
 __all__ = [
     "ApiKey",
     "Base",
+    "DemoUsage",
     "EvalBatch",
     "EvalBatchStatus",
     "EvalCase",

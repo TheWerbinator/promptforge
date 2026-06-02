@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from promptforge_api.core.db import get_engine, get_session, get_session_factory
-from promptforge_api.core.deps import Principal, get_principal, get_repo
+from promptforge_api.core.deps import Principal, get_repo, require_writer
 from promptforge_api.core.queue import Queue, _batch_channel
 from promptforge_api.models import (
     EvalBatch,
@@ -59,7 +59,7 @@ batches_router = APIRouter(prefix="/eval-batches", tags=["evals"])
 )
 async def create_suite(
     body: EvalSuiteCreate,
-    principal: Principal = Depends(get_principal),
+    principal: Principal = Depends(require_writer),
     repo: TenantRepository[EvalSuite] = Depends(get_repo(EvalSuite)),
 ) -> EvalSuiteResponse:
     try:
@@ -93,6 +93,7 @@ async def list_suites(
 async def add_case(
     suite_id: UUID,
     body: EvalCaseCreate,
+    _writer: Principal = Depends(require_writer),
     repo: TenantRepository[EvalSuite] = Depends(get_repo(EvalSuite)),
     session: AsyncSession = Depends(get_session),
 ) -> EvalCaseResponse:
@@ -138,7 +139,7 @@ async def list_cases(
 async def run_batch(
     suite_id: UUID,
     body: EvalBatchRunRequest,
-    principal: Principal = Depends(get_principal),
+    principal: Principal = Depends(require_writer),
     repo: TenantRepository[EvalSuite] = Depends(get_repo(EvalSuite)),
     session: AsyncSession = Depends(get_session),
 ) -> EvalBatchResponse:

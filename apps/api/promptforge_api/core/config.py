@@ -33,9 +33,17 @@ class Settings(BaseSettings):
 
     demo_email: str = "demo@promptforge.dev"
     demo_rate_limit: str = "5/minute"
+    # Free real LLM runs a demo visitor gets on the hosted key (per client IP per
+    # day) before they must supply their own provider key. Gives a genuine taste
+    # without letting one visitor — or a bot — run up the hosted-key bill.
+    demo_free_runs: int = 5
 
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 30
+    # Refresh-token reaper: hard-delete tokens whose expires_at is older than the
+    # retention window. The worker runs it on this interval.
+    refresh_retention_days: int = 90
+    refresh_reaper_interval_hours: int = 24
 
     # When False, the refresh cookie is set without Secure (required for HTTP
     # local dev and the in-process TestClient). Always True in deployed envs.

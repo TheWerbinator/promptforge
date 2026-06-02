@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from promptforge_api.core.db import get_session
-from promptforge_api.core.deps import Principal, get_principal, get_repo
+from promptforge_api.core.deps import Principal, get_principal, get_repo, require_writer
 from promptforge_api.core.prompts import PromptTemplate, PromptVariable
 from promptforge_api.models import Prompt, PromptVersion, PromptVisibility
 from promptforge_api.repositories import TenantRepository
@@ -95,7 +95,7 @@ async def _next_version_number(session: AsyncSession, prompt_id: UUID) -> int:
 )
 async def create_prompt(
     body: PromptCreate,
-    principal: Principal = Depends(get_principal),
+    principal: Principal = Depends(require_writer),
     repo: TenantRepository[Prompt] = Depends(get_repo(Prompt)),
     session: AsyncSession = Depends(get_session),
 ) -> PromptDetailResponse:
@@ -186,7 +186,7 @@ async def get_prompt(
 async def update_prompt(
     prompt_id: UUID,
     body: PromptUpdate,
-    principal: Principal = Depends(get_principal),
+    principal: Principal = Depends(require_writer),
     repo: TenantRepository[Prompt] = Depends(get_repo(Prompt)),
 ) -> PromptResponse:
     prompt = await _resolve_prompt_for_principal(prompt_id, principal, repo)
@@ -213,7 +213,7 @@ async def update_prompt(
 @router.delete("/{prompt_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_prompt(
     prompt_id: UUID,
-    principal: Principal = Depends(get_principal),
+    principal: Principal = Depends(require_writer),
     repo: TenantRepository[Prompt] = Depends(get_repo(Prompt)),
 ) -> Response:
     prompt = await _resolve_prompt_for_principal(prompt_id, principal, repo)
@@ -230,7 +230,7 @@ async def delete_prompt(
 async def create_prompt_version(
     prompt_id: UUID,
     body: PromptVersionCreate,
-    principal: Principal = Depends(get_principal),
+    principal: Principal = Depends(require_writer),
     repo: TenantRepository[Prompt] = Depends(get_repo(Prompt)),
     session: AsyncSession = Depends(get_session),
 ) -> PromptVersionResponse:
