@@ -57,9 +57,9 @@ Two processes share a single Docker image: `api` (uvicorn) and `worker` (queue c
 - `core/queue.py` — *pending phase 8* — Postgres `SKIP LOCKED` queue + `LISTEN/NOTIFY` SSE fanout (sqlite-practice DNA reframed)
 - `repositories/base.py` — `TenantRepository[T]` generic; mandatory `org_id` scope; optional composed-after `where` kwarg; cross-org returns None (404, not 403)
 
-**Routes (current):** `/api/v1/auth/{signup,login,me,refresh,logout,api-keys}` · `/api/v1/demo/{login,quota}` · `/api/v1/prompts` CRUD + `/prompts/{id}/versions` + `/versions/{id}` · `/api/v1/versions/{id}/run` + `/runs/{id}` · `/api/v1/eval-suites` (+ cases, run) + `/eval-batches/{id}` + `/eval-batches/{id}/stream` (SSE) · `/health`. OpenAPI at `/docs`.
+**Routes (current):** `/api/v1/auth/{signup,login,me,refresh,logout,api-keys}` · `/api/v1/demo/{login,quota}` · `/api/v1/prompts` CRUD + `/prompts/{id}/versions` + `/versions/{id}` · `/api/v1/versions/{id}/run` + `/runs/{id}` · `/api/v1/eval-suites` (+ cases, run) + `/eval-batches/{id}` + `/eval-batches/{id}/stream` (SSE) · `/api/v1/shares` (+ `/{id}`) + `/api/v1/public/share/{token}` (no auth) · `/health`. OpenAPI at `/docs`.
 
-**Routes (pending):** `/public/share/{token}`.
+**Routes (pending):** none for apps/api MVP — remaining work is seed (15), deploy/observability (16), README polish (17).
 
 ### apps/ragent — RAG + agent service *(not started)*
 
@@ -83,7 +83,7 @@ Next.js 15 App Router · React 19 · TypeScript strict · Tailwind · shadcn/ui 
 | `Run` | Single LLM execution record | ✓ phase 10 |
 | `EvalSuite`, `EvalCase`, `EvalBatch`, `EvalResult` | Eval orchestration | ✓ phase 11 |
 | `DemoUsage` | Per-IP daily free-run counter (HMAC'd IP) — abuse/cost control | ✓ phase 13 |
-| `ShareToken` | Public read-only links | pending phase 14 |
+| `ShareToken` | Public read-only links (polymorphic: prompt or eval_batch; HMAC'd token) | ✓ phase 14 |
 | `Corpus`, `Document`, `Chunk` | ragent vector store (`embedding_1536` + `embedding_384` nullable cols) | pending |
 | `Conversation`, `Message` | Chat history | pending |
 

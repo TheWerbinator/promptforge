@@ -381,3 +381,21 @@ It's the one unauthenticated endpoint that does real work on every call: a DB lo
 ## Why is the refresh-token reaper in the worker, and why test the function not the loop?
 
 The reaper is a periodic side task, and the worker is already the long-lived process that owns background work — putting it there avoids standing up a separate scheduler. Per the test-directness rule, the interval loop is process plumbing (sleep, cancel on shutdown) and isn't worth a brittle timing test; the *logic* — "delete tokens past the retention window, keep the rest" — is a plain function with an integration test against real Postgres. Revoked/replaced tokens are kept until they age out so the chain-revocation audit trail survives for the retention window, then they're just dead rows.
+
+# Phase 14 — Public share tokens
+
+## Why one polymorphic ShareToken instead of a share table per resource?
+
+Sharing is the same mechanism regardless of what's shared: an opaque token, a target, optional expiry, revocation. Modeling it as `(resource_type, resource_id)` means one table, one creation path, one public endpoint that branches on type — adding a third shareable later (a single Run, say) is an enum value plus a projection function, not a new table + route + tests. The cost is no FK on `resource_id` (the target table varies), so the public endpoint resolves the row by type and 404s if it's gone — which is the behavior you want anyway when the underlying resource was deleted.
+
+## Why hash the share token when the link is meant to be shared?
+
+The token is low-secrecy by purpose — it lives in a URL someone forwards — but "stored hashed" still buys something: a database dump doesn't hand an attacker a set of live, working share URLs. Same pattern as refresh tokens: store `HMAC(token)`, look up by digest, return the plaintext exactly once at creation. Reuse isn't a problem the way it is for refresh tokens — a share link is meant to be hit repeatedly — so there's no rotation, just revoke + optional expiry.
+
+## Why a separate minimal public projection instead of reusing the normal response models?
+
+The authenticated responses carry workspace internals — `org_id`, `created_by`, `provider_response`, suite/case ids. A public link must expose the *artifact* and nothing about the workspace behind it, so the public schemas are a deliberately smaller, separate shape: a shared prompt is name + description + latest version body/vars; a shared eval batch is suite name + status + pass rate + per-case results. Reusing the internal models and hoping to strip fields later is how a refactor accidentally leaks `org_id` into a public endpoint. Separate types make the public surface explicit and reviewable.
+
+## Why is the public endpoint the only unauthenticated read, and how is it kept safe?
+
+Every other read goes through `get_principal` + `TenantRepository`; this one can't, because the whole point is access without an account. The safety comes from the token being the capability: 32 bytes of `secrets.token_urlsafe`, looked up by HMAC, with revocation and optional expiry checked before anything is loaded. Creating a share is still tenant-gated (you can only mint a link for a resource in your own org, writer role only — demo can't), so the unauthenticated surface is strictly "resolve a capability someone already chose to hand out."
