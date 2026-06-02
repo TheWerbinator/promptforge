@@ -107,6 +107,12 @@ def generate_refresh_token() -> tuple[str, str]:
     return plain, hmac_token(plain)
 
 
+def generate_share_token() -> tuple[str, str]:
+    """Return (plain_token, hmac_hex). Plain goes in the share URL, hmac in the DB."""
+    plain = secrets.token_urlsafe(32)
+    return plain, hmac_token(plain)
+
+
 def hmac_token(plain: str) -> str:
     secret = get_settings().jwt_secret.get_secret_value().encode()
     return hmac.new(secret, plain.encode(), hashlib.sha256).hexdigest()

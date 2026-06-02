@@ -20,6 +20,7 @@ from promptforge_api.models.org import Membership, Org, OrgRole
 from promptforge_api.models.prompt import Prompt, PromptVersion, PromptVisibility
 from promptforge_api.models.refresh_token import RefreshToken
 from promptforge_api.models.run import Run
+from promptforge_api.models.share_token import ShareResourceType, ShareToken
 from promptforge_api.models.user import User
 
 __all__ = [
@@ -41,5 +42,7 @@ __all__ = [
     "PromptVisibility",
     "RefreshToken",
     "Run",
+    "ShareResourceType",
+    "ShareToken",
     "User",
 ]
