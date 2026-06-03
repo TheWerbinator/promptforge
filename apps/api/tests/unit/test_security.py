@@ -154,6 +154,17 @@ def test_parse_api_key_prefix_valid() -> None:
     assert parse_api_key_prefix(plain) == prefix
 
 
+def test_generated_prefix_round_trips_every_time() -> None:
+    # Regression: the prefix used to be token_urlsafe, whose alphabet includes
+    # '_'. With the old split('_') parser, ~12% of keys parsed to the wrong
+    # prefix and failed lookup with a 401. 200 iterations makes that near-certain
+    # to catch; all must round-trip exactly.
+    for _ in range(200):
+        plain, prefix, _hashed = generate_api_key()
+        assert "_" not in prefix
+        assert parse_api_key_prefix(plain) == prefix
+
+
 @pytest.mark.parametrize(
     "candidate",
     [
