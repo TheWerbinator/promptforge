@@ -112,8 +112,11 @@ jobs:
         uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: Deploy
-        # release_command in fly.toml runs `alembic upgrade head` before traffic
-        # shifts; if migrations fail the deploy aborts with old machines serving.
-        run: flyctl deploy --remote-only --config apps/api/fly.toml --dockerfile apps/api/Dockerfile apps/api
+        # The workflow-level `defaults.run.working-directory: apps/api` already
+        # puts us in apps/api, so paths here are relative to it (passing apps/api
+        # again chdir'd into apps/api/apps/api). fly.toml + Dockerfile are in cwd.
+        # release_command in fly.toml runs migrations + seed before traffic shifts;
+        # on failure the deploy aborts with old machines still serving.
+        run: flyctl deploy --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
