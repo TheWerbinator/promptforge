@@ -421,3 +421,21 @@ The demo's job is to show the product honestly, and the product's real value is 
 ## Why are the demo share tokens hard-coded constants?
 
 The public share links need stable URLs so the README and demo walkthrough can point at "a live prompt" and "a live eval report" that don't change on each reseed. They're public-by-design capabilities (the whole point is to hand them out), so there's no secret to protect — but they're still stored hashed like any other share token, so the table has no special case. ruff's hardcoded-password lint flags them; they carry an inline `noqa` with the reason.
+
+# Phase 16 — Deploy + observability
+
+## Why is the request-context middleware raw ASGI instead of BaseHTTPMiddleware?
+
+Starlette's `BaseHTTPMiddleware` reads the response body to hand you a `Response` object — it buffers. That's fine for JSON but fatal for the SSE eval stream: it would hold the whole stream until the batch finished, defeating the point. A raw ASGI middleware wraps `send` and touches only the `http.response.start` message (to grab the status and append `X-Request-ID`); the streaming body messages pass straight through untouched. So the same middleware that binds the request id and logs every request also coexists with SSE. It's added last so it's the outermost layer — the id is bound before anything else runs and is present even on error responses.
+
+## Why structlog now but OpenTelemetry deferred?
+
+Structured logs are non-negotiable for anything deployed: JSON lines with a bound `request_id` (echoed on `X-Request-ID`) make production debuggable for the cost of a small dependency already in the tree. Full OTel tracing is a different trade — it pulls in ~5 instrumentation packages that, on a zero-traffic demo, sit unused and add install weight and CVE surface. The senior move is to wire the cheap, high-value half and leave a clean, documented seam for the rest: a single enable-point in the lifespan, gated on `OTEL_EXPORTER_OTLP_ENDPOINT`. "I wired logs; tracing is one env var and a dependency group away" is a stronger answer than shipping an instrumentation stack the app never exercises.
+
+## Why does the Fly release command run the seed on every deploy?
+
+`release_command` runs on a temporary machine before traffic shifts, with the app's secrets and a migrated database — exactly the right place to guarantee the demo workspace exists. Because the seed is idempotent (get-or-create throughout), running it every deploy is safe and means a fresh environment is demo-ready with no manual step. It's chained after migrations with an explicit `sh -c 'alembic upgrade head && python -m promptforge_api.seed'` because Fly replaces `CMD` with the command and doesn't guarantee a shell — relying on bare `&&` would be undefined. If either step fails, the release aborts and the old machines keep serving.
+
+## Why does the demo's hosted key live in a server secret, and what breaks without it?
+
+The free-taste demo runs execute against our key, so `PF_OPENAI_API_KEY` (or the Anthropic one) has to be a Fly secret on the api app. Without it, `services/llm.py` has no key for non-BYOK calls and every free demo run fails — the visitor hits the "add your own key" path immediately, which defeats the taste-first funnel. It's documented as a required secret in the deploy runbook for exactly that reason, separate from the BYOK path which never touches it.

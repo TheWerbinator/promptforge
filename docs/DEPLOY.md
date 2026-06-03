@@ -1,122 +1,119 @@
-# DEPLOY — apps/api on Fly.io
+# DEPLOY — apps/api on Fly.io + Neon
 
-> Phase 10.5 deploy-smoke runbook. Goal: get `apps/api` + Postgres live on Fly.io and verify `/health`, `/docs`, `/api/v1/auth/signup`, `/api/v1/auth/login`, and one `POST /api/v1/versions/{id}/run` work end-to-end in production. This is a milestone, not a real deploy — we'll do the polished deploy (with seed + ragent + web) in phase 16.
+> Phase 16 production runbook. Gets `apps/api` (api + worker) live on Fly.io with
+> Neon Postgres, demo data seeded, structured logging on, and a full smoke that
+> covers auth, demo mode, eval streaming, and public share links. **Jake runs all
+> of these commands** — this doc is the checklist.
 
-## Prerequisites
+The app is already provisioned (Phase 10.5). Day-to-day you just `git push` to `main`; CI runs and the `deploy` job in `.github/workflows/api.yml` ships it. The sections below are the one-time setup + the manual deploy/smoke path.
 
-- Fly CLI installed (`flyctl`)
-- Logged in: `fly auth login`
-- Docker Desktop running locally (for `fly deploy` image build)
+## Topology
+
+- **Fly app** `promptforge-api`, region `ord`, two processes (`api` + `worker`) from one image.
+- **Database** Neon Postgres 17 + pgvector, **direct (session-mode)** endpoint. *Not* Fly Postgres — see INTERVIEW-NOTES "Why Neon over Fly Managed Postgres or Supabase". The DSN normalizer in `core/config.py` rewrites any provider DSN to `postgresql+asyncpg://`.
+- **Release step** runs migrations then the idempotent demo seed (see `fly.toml [deploy]`).
 
 ## One-time setup
 
-### 1. Launch the app (no deploy yet)
-
-From `apps/api/`:
-
-```sh
-fly launch --no-deploy --copy-config --name promptforge-api --region ord
-```
-
-The `fly.toml` already on disk has the processes, services, health check, and `release_command = "alembic upgrade head"` ready. Decline the prompt to overwrite it.
-
-### 2. Provision Postgres
-
-```sh
-fly postgres create --name promptforge-db --region ord --vm-size shared-cpu-1x --volume-size 1
-fly postgres attach --app promptforge-api promptforge-db
-```
-
-`attach` sets `DATABASE_URL` as a secret on the api app. Our config expects `PF_DATABASE_URL`, so rename:
-
-```sh
-fly secrets set --app promptforge-api PF_DATABASE_URL="$(fly secrets list --app promptforge-api -j | jq -r '.[] | select(.Name==\"DATABASE_URL\") | .Value')"
-```
-
-Or set it manually using the DSN from `fly postgres connect`. The DSN must use the `postgresql+asyncpg://` scheme — replace the `postgres://` prefix Fly returns.
-
-### 3. Required secrets
+### 1. Secrets
 
 ```sh
 fly secrets set --app promptforge-api \
+  PF_DATABASE_URL="postgresql://<user>:<pwd>@<neon-direct-host>/<db>?sslmode=require" \
   PF_JWT_SECRET="$(openssl rand -hex 32)" \
   PF_COOKIE_SECURE=true \
-  PF_CORS_ORIGINS='["https://promptforge.vercel.app"]'   # placeholder until web ships
+  PF_CORS_ORIGINS='["https://promptforge.vercel.app"]'
+```
 
-# Optional — only needed when not using BYOK on every request:
-fly secrets set --app promptforge-api \
-  PF_OPENAI_API_KEY="sk-..." \
-  PF_ANTHROPIC_API_KEY="sk-ant-..."
+Use Neon's **direct** connection string (not the `-pooler` host): asyncpg's
+prepared-statement cache breaks against PgBouncer transaction mode. The normalizer
+handles the `postgresql://` scheme and `sslmode`→`ssl` rewrite.
+
+**Hosted demo key (required for the free-run demo to work).** Demo visitors get a
+few real runs on this key before BYOK; without it, every demo run 402s immediately.
+
+```sh
+fly secrets set --app promptforge-api PF_OPENAI_API_KEY="sk-..."
+# and/or PF_ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+Optional demo tuning (defaults shown): `PF_DEMO_FREE_RUNS=5`, `PF_DEMO_RATE_LIMIT=5/minute`, `PF_DEMO_EMAIL=demo@promptforge.dev`.
+
+### 2. CI/CD deploy token
+
+The `deploy` job needs `FLY_API_TOKEN` as a **GitHub Actions repo secret**:
+
+```sh
+fly tokens create deploy -x 999999h --app promptforge-api
+# copy the output, then in GitHub: Settings → Secrets and variables → Actions →
+# New repository secret → name FLY_API_TOKEN, paste value.
 ```
 
 ## Deploy
 
-From `apps/api/`:
+Normal path: merge to `main`; CI lints + types + tests, then the `deploy` job runs `flyctl deploy`. Manual deploy from `apps/api/`:
 
 ```sh
 fly deploy
 ```
 
-The release_command runs `alembic upgrade head` on a temporary machine before traffic shifts. If migrations fail, the deploy aborts and old machines keep serving (zero-downtime invariant).
+The release machine runs `alembic upgrade head && python -m promptforge_api.seed` before traffic shifts. Migration or seed failure aborts the release; old machines keep serving (zero-downtime invariant). The seed is idempotent — re-running it on every deploy is intended.
+
+### Worker
+
+The `worker` process consumes eval-batch jobs. The seeded demo eval batch is pre-computed (no worker needed to view it), and demo accounts can't launch batches, so the worker can sit at 0 to save cost until a real signed-up user runs evals:
+
+```sh
+fly scale count worker=1   # enable eval-batch processing
+fly scale count worker=0   # idle / cost-saving
+```
+
+Scale tracks **deploy** state, not commit state — only bring the worker up after a successful deploy, and down when there's no eval traffic.
 
 ## Smoke test
-
-Once `fly deploy` reports success:
 
 ```sh
 APP="https://promptforge-api.fly.dev"
 
-# 1. Liveness
+# 1. Liveness + version
 curl -fsS $APP/health
-# Expect: {"status":"ok","version":"0.1.0"}
-
-# 2. OpenAPI is reachable
+# 2. OpenAPI + docs reachable (hiring teams open /docs)
 curl -fsS -o /dev/null $APP/openapi.json && echo "openapi ok"
+curl -fsS -o /dev/null $APP/docs && echo "docs ok"
 
-# 3. Signup
-SIGNUP=$(curl -fsS -X POST $APP/api/v1/auth/signup \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"smoke@promptforge.dev","password":"Smoke12345!","display_name":"Smoke"}')
-TOKEN=$(echo $SIGNUP | jq -r .access_token)
-echo "token len: ${#TOKEN}"
+# 3. Demo login works (the seed ran in the release step)
+DEMO=$(curl -fsS -X POST $APP/api/v1/demo/login)
+echo "$DEMO" | jq '{role, org: .org.slug, free_runs_remaining}'
+DTOKEN=$(echo "$DEMO" | jq -r .access_token)
 
-# 4. /me
-curl -fsS $APP/api/v1/auth/me -H "Authorization: Bearer $TOKEN" | jq .user.email
+# 4. Demo session is read-only (expect 403)
+curl -s -o /dev/null -w '%{http_code}\n' -X POST $APP/api/v1/prompts \
+  -H "Authorization: Bearer $DTOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"x","body":"y","variables":[]}'   # expect 403
 
-# 5. Create a prompt
-PROMPT=$(curl -fsS -X POST $APP/api/v1/prompts \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"name":"smoke","body":"Say hi to {{name}}","variables":[{"name":"name","type":"str"}]}')
-VID=$(echo $PROMPT | jq -r .latest_version.id)
-echo "version id: $VID"
+# 5. Seeded public share links resolve (no auth)
+curl -fsS $APP/api/v1/public/share/demo-prompt-support-reply | jq '.prompt.name'
+curl -fsS $APP/api/v1/public/share/demo-eval-support-quality | jq '.eval_batch | {status, pass_rate}'
 
-# 6. Run it (BYOK — supply your own key on this call so it does not depend on
-#    PF_OPENAI_API_KEY being set on the server).
-curl -fsS -X POST "$APP/api/v1/versions/$VID/run" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "X-Provider-Key: $OPENAI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"openai/gpt-4o-mini","inputs":{"name":"Jake"}}' | jq '{output, latency_ms, error}'
+# 6. A free demo run on the hosted key (no BYOK) — proves PF_OPENAI_API_KEY is set
+VID=$(curl -fsS $APP/api/v1/public/share/demo-prompt-support-reply | jq -r '.prompt.latest_version.version')
+# (browse /docs to grab a real version id, or sign up and run; the share view
+#  exposes the body but not the version id by design.)
+
+# 7. Every response carried a request id
+curl -fsS -D - -o /dev/null $APP/health | grep -i x-request-id
 ```
 
-If all six steps return cleanly, the smoke is green. Take a screenshot of the `/docs` page for the README, then move to phase 11.
+Green smoke = auth, demo mode, read-only enforcement, public shares, and the seed/release pipeline all work in prod. For the live SSE path, sign up, create a suite + case, `POST /eval-suites/{id}/run`, and `curl -N` the `/eval-batches/{id}/stream` endpoint with the worker scaled to 1 — you should see `event: open`, `event: result`, `event: done`.
 
-## What we proved
+## Observability
 
-- Docker image builds + boots on Fly
-- Alembic release-command actually runs migrations against Fly Postgres
-- asyncpg DSN scheme works end-to-end
-- JWT auth round-trips through HTTPS (cookie_secure=true won't leak)
-- TenantRepository + visibility + template rendering + LLM call work in prod
-- /docs is publicly reachable (good for hiring teams)
+Structured logs (structlog) are JSON in prod, console when `PF_LOG_LEVEL=DEBUG`.
+Each line carries `request_id`; the same id is on the `X-Request-ID` response
+header. View: `fly logs --app promptforge-api`.
 
-## What we did NOT prove (intentional — later phases)
-
-- Worker process consuming the queue (phase 11 wires it)
-- SSE through Fly's proxy (phase 12)
-- Demo mode + `/demo/login` (phase 13)
-- Seed data (phase 15)
-- ragent + web (separate apps, separate deploys)
+OpenTelemetry tracing is deliberately not wired (see INTERVIEW-NOTES). The single
+enable point is the lifespan in `main.py`, gated on `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
 ## Roll back
 

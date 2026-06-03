@@ -12,7 +12,11 @@ kill_timeout = '30s'
   dockerfile = 'Dockerfile'
 
 [deploy]
-  release_command = 'alembic upgrade head'
+  # Explicit `sh -c` because release_command replaces CMD with no guaranteed
+  # shell — portable way to chain. Migrate first, then the idempotent demo seed
+  # (safe to re-run every deploy). If either fails the release aborts and the old
+  # machines keep serving.
+  release_command = "sh -c 'alembic upgrade head && python -m promptforge_api.seed'"
 
 [env]
   PF_LOG_LEVEL = 'INFO'

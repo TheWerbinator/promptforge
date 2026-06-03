@@ -119,7 +119,9 @@ Demo mode (phase 13): `POST /demo/login` issues a read-only JWT for the seeded `
 | Future: `apps/ragent` | Fly.io, same region |
 | Future: `apps/web` | Vercel |
 
-Fly's `[deploy] release_command = "alembic upgrade head"` runs migrations on a temp machine before traffic shifts; failed migrations abort the deploy with old machines still serving.
+Fly's `[deploy] release_command = "sh -c 'alembic upgrade head && python -m promptforge_api.seed'"` runs migrations then the idempotent demo seed on a temp machine before traffic shifts; failure aborts the deploy with old machines still serving.
+
+**Observability:** structlog (`core/logging.py`) — JSON in prod, console at `PF_LOG_LEVEL=DEBUG`. A raw-ASGI `RequestContextMiddleware` binds a `request_id` to the log contextvars and echoes it on `X-Request-ID` (raw ASGI, not BaseHTTPMiddleware, so it doesn't buffer the SSE stream). OpenTelemetry is deferred behind a documented gated enable-point in the `main.py` lifespan.
 
 The DSN normalizer in [`promptforge_api/core/config.py`](../apps/api/promptforge_api/core/config.py) (`Settings.async_database_url`) accepts any provider's DSN shape — bare `postgresql://`, old-style `postgres://`, with or without `sslmode` query param — and rewrites it to `postgresql+asyncpg://` with `ssl=` for asyncpg compatibility.
 

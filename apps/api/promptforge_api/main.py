@@ -11,15 +11,19 @@ from slowapi.errors import RateLimitExceeded
 from promptforge_api import __version__
 from promptforge_api.api.v1 import api_router
 from promptforge_api.core.config import get_settings
+from promptforge_api.core.logging import RequestContextMiddleware, configure_logging
 from promptforge_api.core.ratelimit import limiter
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    # TODO(phase-16): wire structlog here (json formatter in prod, dev-friendly
-    # console formatter when PF_LOG_LEVEL=DEBUG) and init OpenTelemetry tracing
-    # against the Fly OTel exporter.
-    get_settings()
+    settings = get_settings()
+    configure_logging(settings)
+    # OTel seam: tracing is intentionally NOT wired. The single place to enable
+    # it is here — initialize an OTLP exporter + FastAPI/asyncpg instrumentation
+    # gated on OTEL_EXPORTER_OTLP_ENDPOINT. Deferred deliberately: a zero-traffic
+    # demo shouldn't carry a ~5-package instrumentation stack it never exercises.
+    # See docs/INTERVIEW-NOTES.md "Why structlog now but OTel deferred".
     yield
 
 
@@ -49,6 +53,10 @@ def create_app() -> FastAPI:
             allow_methods=["*"],
             allow_headers=["*"],
         )
+
+    # Added last → outermost: binds the request id before anything else runs and
+    # guarantees X-Request-ID is set even on error responses.
+    app.add_middleware(RequestContextMiddleware)
 
     app.include_router(api_router)
 
