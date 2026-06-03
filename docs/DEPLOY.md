@@ -2,7 +2,7 @@
 
 > Phase 16 production runbook. Gets `apps/api` (api + worker) live on Fly.io with
 > Neon Postgres, demo data seeded, structured logging on, and a full smoke that
-> covers auth, demo mode, eval streaming, and public share links. **Jake runs all
+> covers auth, demo mode, eval streaming, and public share links. **Shawn runs all
 > of these commands** — this doc is the checklist.
 
 The app is already provisioned (Phase 10.5). Day-to-day you just `git push` to `main`; CI runs and the `deploy` job in `.github/workflows/api.yml` ships it. The sections below are the one-time setup + the manual deploy/smoke path.

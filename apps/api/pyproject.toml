@@ -9,7 +9,7 @@ description = "PromptForge backend — multi-tenant LLM prompt management & eval
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = { text = "MIT" }
-authors = [{ name = "Jake Werbin" }]
+authors = [{ name = "Shawn Werber" }]
 
 dependencies = [
     "fastapi>=0.115",
