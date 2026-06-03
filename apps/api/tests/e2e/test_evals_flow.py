@@ -104,7 +104,7 @@ async def _make_two_case_batch(client: AsyncClient, h: dict[str, str]) -> str:
             json={"name": "greet-quality", "judge_default": "contains"},
         )
     ).json()
-    for name in ("Jake", "Casey"):
+    for name in ("Shawn", "Casey"):
         await client.post(
             f"/api/v1/eval-suites/{suite['id']}/cases",
             headers=h,
@@ -158,7 +158,7 @@ async def test_create_suite_add_cases_run_batch_persists_results(
         f"/api/v1/eval-suites/{suite_id}/cases",
         headers=h,
         json={
-            "inputs": {"name": "Jake"},
+            "inputs": {"name": "Shawn"},
             "expected": {"value": "hello"},
         },
     )
