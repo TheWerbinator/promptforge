@@ -130,3 +130,5 @@ docker compose -f infra/compose.yml up --wait
 ```
 
 Brings up Postgres 17 + a one-shot `api-migrate` (runs `alembic upgrade head`) + the api service. See `infra/compose.yml`. Production deploy runbook: [`DEPLOY.md`](DEPLOY.md).
+
+Populate the demo workspace with `python -m promptforge_api.seed` (idempotent — `promptforge_api/seed.py`). This is what makes `POST /demo/login` land on real content; Phase 16 runs it as part of the Fly release step.

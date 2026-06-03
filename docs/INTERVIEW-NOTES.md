@@ -399,3 +399,25 @@ The authenticated responses carry workspace internals — `org_id`, `created_by`
 ## Why is the public endpoint the only unauthenticated read, and how is it kept safe?
 
 Every other read goes through `get_principal` + `TenantRepository`; this one can't, because the whole point is access without an account. The safety comes from the token being the capability: 32 bytes of `secrets.token_urlsafe`, looked up by HMAC, with revocation and optional expiry checked before anything is loaded. Creating a share is still tenant-gated (you can only mint a link for a resource in your own org, writer role only — demo can't), so the unauthenticated surface is strictly "resolve a capability someone already chose to hand out."
+
+# Phase 15 — Demo seed
+
+## Why is the seed in-package (`promptforge_api/seed.py`) instead of a loose `scripts/` file?
+
+A loose script sits outside the package, so it dodges mypy --strict, ruff, and coverage — exactly the seed that writes to every table is the one you don't want untyped and untested. Keeping `seed_demo(session)` in-package means it's type-checked against the real models, the logic is unit-testable (the test passes a session and asserts the dataset), and `main()` is a thin `python -m promptforge_api.seed` wrapper. The script/library split is the same one used for the worker.
+
+## Why must the seed be idempotent rather than a one-shot insert?
+
+It runs on every deploy (Phase 16 wires it into the release step), and a deploy can re-run or partially fail. A plain insert would either duplicate the demo data or crash on the unique constraints the second time. Every section is get-or-create keyed on a natural identifier — user by email, org by slug, prompts by (org, name), versions by number, the eval suite by (org, name), shares by token hash — so the second run is a no-op and the demo workspace stays exactly one clean copy.
+
+## Why give the demo user an unusable password instead of a known one?
+
+The demo account is meant to be entered only through `/demo/login`, which issues a read-only session without a password. Seeding a *known* password would create a second, uncontrolled way in — and since every visitor shares this account, a known password is effectively a public credential to a real (if read-only) org. Hashing a random throwaway secret means the row satisfies the not-null password constraint while `/auth/login` can never succeed for it.
+
+## Why seed a failed run and a mixed-pass eval batch, not all-green data?
+
+The demo's job is to show the product honestly, and the product's real value is in surfacing failures — the failed-run row exists precisely so the runs view shows error handling, and the 2-of-3 eval batch makes the pass-rate and the per-case "why it failed" reasoning meaningful instead of a meaningless 100%. All-green seed data would hide the exact features (error capture, eval scoring) that make the platform worth looking at.
+
+## Why are the demo share tokens hard-coded constants?
+
+The public share links need stable URLs so the README and demo walkthrough can point at "a live prompt" and "a live eval report" that don't change on each reseed. They're public-by-design capabilities (the whole point is to hand them out), so there's no secret to protect — but they're still stored hashed like any other share token, so the table has no special case. ruff's hardcoded-password lint flags them; they carry an inline `noqa` with the reason.
