@@ -76,7 +76,7 @@ Demonstrates the platform integration story: prompts are managed in the platform
 
 Two services under same control + same deploy unit = HS256 shared secret is fine. The alternative — opaque tokens validated via api round-trip — adds latency on every request. If a third service joined or services were operated by different teams, RS256 + JWKS at apps/api would be the move.
 
-## Why Next.js 15 App Router over Pages Router?
+## Why Next.js 16 App Router over Pages Router?
 
 RSC + Server Actions remove a ton of client-state ceremony. Data fetches happen on the server, types stay shared with server code, mutations don't need separate API routes. Prior Pages Router experience; App Router took ~1 week to internalize and now is the better pick for new builds.
 

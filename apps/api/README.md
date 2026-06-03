@@ -42,8 +42,8 @@ uv run pytest -m "not integration and not e2e"   # unit only (no Docker)
 CI runs the same checks across Python 3.11 + 3.12, then deploys to Fly on green
 pushes to `main`. See [../../docs/DEPLOY.md](../../docs/DEPLOY.md).
 
-## Design notes
+## Docs
 
-Every architectural choice is written up in
-[../../docs/INTERVIEW-NOTES.md](../../docs/INTERVIEW-NOTES.md); the system shape is in
-[../../docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md).
+- **[../../docs/GUIDE.md](../../docs/GUIDE.md)** — what it does, the workflow, what you provide.
+- **[../../docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)** — system shape.
+- **[../../docs/INTERVIEW-NOTES.md](../../docs/INTERVIEW-NOTES.md)** — the "why" behind every choice.

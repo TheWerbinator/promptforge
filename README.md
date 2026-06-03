@@ -5,6 +5,8 @@
 [![api](https://github.com/TheWerbinator/promptforge/actions/workflows/api.yml/badge.svg)](https://github.com/TheWerbinator/promptforge/actions/workflows/api.yml)
 &nbsp;Python 3.11–3.12 · FastAPI · Postgres 17 + pgvector · mypy --strict · 222 tests · ~85% coverage
 
+**New here?** [docs/GUIDE.md](docs/GUIDE.md) explains what PromptForge does, the workflow, and what you provide to get value out of it.
+
 ---
 
 ## Try it without signing up
