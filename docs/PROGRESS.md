@@ -64,8 +64,10 @@ Grep `TODO(phase-` to refresh:
 ## Code health snapshot
 
 - **51 source files.**
-- **221 tests pass** (full suite, Docker up — 2026-06-02). Unit + integration (testcontainers models/queue/reaper/seed) + tenancy (api-keys/prompts/shares) + e2e (auth/prompts/runs/evals incl. SSE + demo mode + share links + seed + request-id).
+- **222 tests pass** (full suite, Docker up — 2026-06-02). Unit + integration (testcontainers models/queue/reaper/seed) + tenancy (api-keys/prompts/shares) + e2e (auth/prompts/runs/evals incl. SSE + demo mode + share links + seed + request-id).
 - ruff + ruff format + mypy --strict clean across all 51 source files.
+- **CI fix:** coverage gate moved off the unit-only job onto the full suite (`tests` job, `--cov-fail-under=80`; actual ~85%). Unit-alone coverage had drifted to 62.9% as route code grew (it's covered by e2e), reddening CI.
+- **Bug fixed (API key prefix):** prefix was `token_urlsafe` (alphabet has `_`) but parsed via `split('_')` → ~12% of keys parsed wrong and 401'd on lookup (surfaced as a flaky api-key test). Now hex prefix + fixed-length parse; 200-key round-trip regression test.
 - **CI workflow:** `.github/workflows/api.yml` — split into unit (3.11/3.12 matrix) + integration (testcontainers). CD: `deploy.yml` ships apps/api to Fly on green push to main (needs `FLY_API_TOKEN` repo secret set).
 - **Known deprecation (follow-up):** routes still use `status.HTTP_422_UNPROCESSABLE_ENTITY` (Starlette renamed it to `_UNPROCESSABLE_CONTENT`); warnings surface in pytest. Low-risk rename per [feedback-latest-lts]; do in a cleanup pass.
 - **Demo cost guard:** per-IP daily free-run cap + global 10/s LLM TokenBucket. A determined attacker rotating IPs could still drive hosted-key cost; documented future mitigation = Cloudflare/global daily $ cap (not built — low risk at portfolio scale).

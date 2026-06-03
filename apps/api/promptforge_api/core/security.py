@@ -127,7 +127,10 @@ def verify_refresh_token(plain: str, stored_hmac: str) -> bool:
 def generate_api_key() -> tuple[str, str, str]:
     """Return (plain_key, prefix, argon2_hash)."""
     secret = secrets.token_urlsafe(API_KEY_SECRET_BYTES)
-    prefix = secrets.token_urlsafe(6)[:API_KEY_RANDOM_PREFIX_LEN]
+    # Hex prefix (not token_urlsafe): urlsafe's alphabet includes '_', which
+    # collides with the '_' separator and used to break prefix parsing ~12% of
+    # the time. Hex is unambiguous.
+    prefix = secrets.token_hex((API_KEY_RANDOM_PREFIX_LEN + 1) // 2)[:API_KEY_RANDOM_PREFIX_LEN]
     plain = f"{API_KEY_PUBLIC_PREFIX}{prefix}_{secret}"
     return plain, prefix, _password_hasher.hash(plain)
 
@@ -144,7 +147,9 @@ def parse_api_key_prefix(plain: str) -> str | None:
     if not plain.startswith(API_KEY_PUBLIC_PREFIX):
         return None
     rest = plain[len(API_KEY_PUBLIC_PREFIX) :]
-    parts = rest.split("_", 1)
-    if len(parts) != 2 or len(parts[0]) != API_KEY_RANDOM_PREFIX_LEN:
+    # Parse by fixed length, not split('_'): the prefix is exactly
+    # API_KEY_RANDOM_PREFIX_LEN chars, then the '_' separator, then the secret.
+    # Splitting on '_' breaks if the prefix or secret contains one.
+    if len(rest) <= API_KEY_RANDOM_PREFIX_LEN or rest[API_KEY_RANDOM_PREFIX_LEN] != "_":
         return None
-    return parts[0]
+    return rest[:API_KEY_RANDOM_PREFIX_LEN]
