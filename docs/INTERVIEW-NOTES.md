@@ -120,6 +120,10 @@ RSC data fetching would be the obvious choice, but the BFF can't refresh-and-re-
 
 Prompt bodies are edited text with `{{variables}}`; a real code editor (monospace, large-doc handling, a familiar editing surface) reads as a product, not a `<textarea>`. `@monaco-editor/react` lazy-loads Monaco only on the pages that mount it (create / version editor), so it never weighs down the landing or list pages. It's wrapped in one `CodeEditor` component so the rest of the app doesn't depend on Monaco's API directly.
 
+## Why "live progress, then refetch full detail" on the eval batch page?
+
+The SSE `result` events are intentionally tiny (case id, version id, pass/fail, score, completed/total) — the API keeps NOTIFY payloads small. That's perfect for a live progress bar and pass/fail ticks as cases finish, but it deliberately omits the judge reasoning. So the batch page renders the live events while streaming, and on the `done` event does one `GET /eval-batches/{id}` to pull the full result rows (with reasoning) for the final table. Small fan-out events for liveness, one authoritative fetch for detail — rather than fattening every event. The stream is opened inside the initial GET's callback (only if the batch isn't already terminal) and aborted on unmount.
+
 ## Why openapi-typescript over orval / Kiota?
 
 Generates types only, not runtime code. Smaller bundle. My fetch wrapper is ~80 lines of code I can read and explain — vs adopting orval's hooks API which would hide auth + refresh logic behind abstraction. Right-size tool for the contract.
