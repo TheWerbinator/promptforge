@@ -30,3 +30,11 @@ class RunResponse(BaseModel):
     latency_ms: int
     error: str | None
     created_at: datetime
+
+
+class RunListResponse(BaseModel):
+    items: list[RunResponse]
+    total: int
+    page: int
+    page_size: int
+    has_more: bool
