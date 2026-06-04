@@ -88,9 +88,17 @@ RSC + Server Actions handle server state for the patterns I have: read-on-render
 
 Zustand is ~1KB and avoids the Context-rerender-everything problem. The two stores I have (dashboard filter, UI shell) are accessed from many components; Context would require splitting providers to avoid cascade rerenders, which is itself ceremony. Zustand's selector pattern handles this for free.
 
-## Why httpOnly cookie for refresh, in-memory for access?
+## Why a BFF (Next route handlers) instead of the browser calling the API directly?
 
-Best balance per OWASP recommendations. Refresh cookie httpOnly = not readable by JS = XSS can't steal it. Access in memory = lost on page reload (intentional; refresh restores it) = no persistent XSS attack surface for the long-lived credential. The 15-min access TTL bounds damage if access token is stolen via in-page XSS.
+The web app and the API are on different origins (vercel.app vs fly.dev). The original plan was browser→API directly with an in-memory access token + httpOnly refresh cookie — but that refresh cookie is now a *third-party* cookie from the browser's perspective, and browsers are actively phasing those out, so it's fragile. The BFF (backend-for-frontend) fixes this: the browser only ever talks to the Next origin; Next route handlers proxy to the API. The session cookie is then *same-origin* to the web app, so no third-party-cookie problem, and — the bigger win — **no API token ever reaches the browser at all**. The cost is a little server-side plumbing (token relay + refresh in the handlers); worth it for the security posture and durability.
+
+## Why seal the session cookie (JWE), and what's actually in it?
+
+The cookie holds the API access token, the refresh token, and a small profile. httpOnly already keeps JS from reading it, but sealing it as a JWE (jose, AES-256-GCM, key derived from a server-only secret) means the cookie value is opaque ciphertext rather than a set of usable bearer tokens — so even if it leaked through some non-JS path it isn't directly replayable, and it's tamper-evident. The browser receives only the profile (id, email, org, role) in the JSON response, never the tokens.
+
+## Why is refresh handled in route handlers (and why is that a known limitation)?
+
+Next only lets you write cookies in a Server Action or Route Handler, not during a Server Component render. So `apiFetch` refreshes-on-401 and re-seals the rotated session only when called from a handler. That's fine for the auth shell (all API access goes through `/api/*` handlers). When later phases fetch data during RSC render, refresh will move to the proxy (middleware) or a generic proxy handler — the standard Next pattern. Calling the API's `/refresh` concurrently could trip the chain-revocation replay defense, so refresh needs single-flighting; documented as a follow-up for the data-heavy phases (serverless makes a shared lock non-trivial).
 
 ## Why openapi-typescript over orval / Kiota?
 
