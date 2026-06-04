@@ -22,6 +22,16 @@ export type EvalBatch = components["schemas"]["EvalBatchResponse"];
 export type EvalBatchDetail = components["schemas"]["EvalBatchDetailResponse"];
 export type EvalResult = components["schemas"]["EvalResultResponse"];
 export type JudgeKind = components["schemas"]["JudgeKind"];
+export type Run = components["schemas"]["RunResponse"];
+
+/** GET /api/v1/runs wrapper (defined here; added to the API after schema gen). */
+export interface RunList {
+  items: Run[];
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
+}
 
 export const JUDGE_KINDS: JudgeKind[] = ["exact", "contains", "regex", "llm_judge"];
 
