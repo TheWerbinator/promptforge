@@ -112,6 +112,14 @@ With the BFF, every data call still has to go through the server (to attach the 
 
 `EventSource` can't set request headers, and in the BFF the stream is authenticated server-side — so the browser opens an unauthenticated connection to the proxy (`/api/pf-stream/...`), which attaches the token and pipes the upstream `text/event-stream` through. On the client, reading that stream with `fetch` + `eventsource-parser` (rather than `EventSource`) gives control over the request, clean abort via `AbortController`, and no reliance on EventSource's auto-reconnect (which would re-open a finished batch's channel). The proxy sets `X-Accel-Buffering: no` + `no-transform` so neither Vercel nor Fly buffers the stream.
 
+## Why fetch data client-side through the proxy instead of in Server Components?
+
+RSC data fetching would be the obvious choice, but the BFF can't refresh-and-re-seal the session cookie during a Server Component render (Next only allows cookie writes in a route handler or action). The interactive pages (prompts, evals) also need client state anyway — forms, the Monaco editor, live SSE, optimistic refresh after a mutation. So those pages are client components that fetch through the proxy (`api.get/post/...`), where the proxy handler owns auth + refresh. Static/marketing routes stay server-rendered. If a page needed RSC streaming for SEO or first-paint, I'd move its initial read to a server component and hydrate — not needed for an authed app behind a login.
+
+## Why the Monaco editor, lazy-loaded?
+
+Prompt bodies are edited text with `{{variables}}`; a real code editor (monospace, large-doc handling, a familiar editing surface) reads as a product, not a `<textarea>`. `@monaco-editor/react` lazy-loads Monaco only on the pages that mount it (create / version editor), so it never weighs down the landing or list pages. It's wrapped in one `CodeEditor` component so the rest of the app doesn't depend on Monaco's API directly.
+
 ## Why openapi-typescript over orval / Kiota?
 
 Generates types only, not runtime code. Smaller bundle. My fetch wrapper is ~80 lines of code I can read and explain — vs adopting orval's hooks API which would hide auth + refresh logic behind abstraction. Right-size tool for the contract.
