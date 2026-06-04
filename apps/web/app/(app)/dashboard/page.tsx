@@ -1,34 +1,20 @@
-"use client";
-
-import { useRouter } from "next/navigation";
-
-import { useAuth } from "@/lib/auth-context";
+const TILES = ["Prompts", "Runs", "Eval suites", "Pass rate"];
 
 export default function DashboardPage() {
-  const { profile, logout } = useAuth();
-  const router = useRouter();
-
   return (
-    <main className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
-      <h1 className="text-2xl font-semibold">Dashboard</h1>
-      <p className="text-neutral-400">
-        Signed in as <span className="text-neutral-200">{profile?.email ?? "—"}</span> · workspace{" "}
-        <span className="text-neutral-200">{profile?.orgSlug ?? "—"}</span> · role{" "}
-        <span className="text-neutral-200">{profile?.role ?? "—"}</span>
-      </p>
+    <div className="flex flex-col gap-6">
+      <h1 className="text-xl font-semibold">Dashboard</h1>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {TILES.map((tile) => (
+          <div key={tile} className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-4">
+            <div className="text-sm text-neutral-400">{tile}</div>
+            <div className="mt-2 text-2xl font-semibold text-neutral-600">—</div>
+          </div>
+        ))}
+      </div>
       <p className="text-sm text-neutral-500">
-        Prompts, runs, and evals land in the next phases.
+        Live metrics wire up once the prompts and evals pages land.
       </p>
-      <button
-        onClick={async () => {
-          await logout();
-          router.push("/login");
-          router.refresh();
-        }}
-        className="rounded-md border border-neutral-700 px-4 py-2 text-sm transition-colors hover:bg-neutral-900"
-      >
-        Log out
-      </button>
-    </main>
+    </div>
   );
 }
