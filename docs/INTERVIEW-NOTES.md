@@ -100,6 +100,10 @@ The cookie holds the API access token, the refresh token, and a small profile. h
 
 Next only lets you write cookies in a Server Action or Route Handler, not during a Server Component render. So `apiFetch` refreshes-on-401 and re-seals the rotated session only when called from a handler. That's fine for the auth shell (all API access goes through `/api/*` handlers). When later phases fetch data during RSC render, refresh will move to the proxy (middleware) or a generic proxy handler — the standard Next pattern. Calling the API's `/refresh` concurrently could trip the chain-revocation replay defense, so refresh needs single-flighting; documented as a follow-up for the data-heavy phases (serverless makes a shared lock non-trivial).
 
+## Why gate routes in both the proxy and the (app) layout?
+
+Defense in depth with different jobs. `proxy.ts` (Next 16's renamed middleware) does a cheap edge presence-check on the session cookie and redirects before any render — fast, good UX, but it only knows "a cookie exists," and matchers can drift out of sync with the route tree. The `(app)/layout.tsx` server guard reads + (implicitly) validates the session and is the authoritative gate covering every page in the group regardless of matcher config. Proxy for speed, layout for correctness.
+
 ## Why openapi-typescript over orval / Kiota?
 
 Generates types only, not runtime code. Smaller bundle. My fetch wrapper is ~80 lines of code I can read and explain — vs adopting orval's hooks API which would hide auth + refresh logic behind abstraction. Right-size tool for the contract.
