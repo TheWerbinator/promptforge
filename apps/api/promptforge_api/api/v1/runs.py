@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from promptforge_api.api.v1.prompts import _resolve_prompt_for_principal
@@ -28,7 +28,7 @@ from promptforge_api.core.prompts import (
 from promptforge_api.core.ratelimit import client_ip
 from promptforge_api.models import OrgRole, Prompt, PromptVersion, Run
 from promptforge_api.repositories import TenantRepository
-from promptforge_api.schemas.run import RunRequest, RunResponse
+from promptforge_api.schemas.run import RunListResponse, RunRequest, RunResponse
 from promptforge_api.services import demo as demo_service
 from promptforge_api.services import llm as llm_service
 
@@ -136,6 +136,24 @@ async def run_version(
         await demo_service.record_free_run(session, demo_ip_hash)
 
     return RunResponse.model_validate(run)
+
+
+@runs_router.get("", response_model=RunListResponse)
+async def list_runs(
+    repo: TenantRepository[Run] = Depends(get_repo(Run)),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+) -> RunListResponse:
+    offset = (page - 1) * page_size
+    items = await repo.list(offset=offset, limit=page_size, order_by=Run.created_at.desc())
+    total = await repo.count()
+    return RunListResponse(
+        items=[RunResponse.model_validate(r) for r in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+        has_more=offset + len(items) < total,
+    )
 
 
 @runs_router.get("/{run_id}", response_model=RunResponse)

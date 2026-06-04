@@ -211,3 +211,45 @@ async def test_run_unknown_version_returns_404(
         json={"model": "openai/gpt-4o-mini", "inputs": {}},
     )
     assert r.status_code == 404
+
+
+async def test_list_runs_paginates_and_scopes_to_org(
+    api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(llm_service, "call_llm", _stub_call_llm())
+
+    # Org A: two runs.
+    a = await _signup(api_client)
+    a_headers = _headers(a["access_token"])
+    prompt = await _create_prompt_with_version(api_client, a_headers)
+    version_id = prompt["latest_version"]["id"]
+    for _ in range(2):
+        rr = await api_client.post(
+            f"/api/v1/versions/{version_id}/run",
+            headers=a_headers,
+            json={"model": "openai/gpt-4o-mini", "inputs": {"document": "x"}},
+        )
+        assert rr.status_code == 201, rr.text
+
+    listed = await api_client.get("/api/v1/runs", headers=a_headers)
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert body["total"] == 2
+    assert len(body["items"]) == 2
+    assert body["has_more"] is False
+    # newest first
+    assert body["items"][0]["created_at"] >= body["items"][1]["created_at"]
+
+    # page_size respected + has_more flips.
+    page1 = await api_client.get("/api/v1/runs?page=1&page_size=1", headers=a_headers)
+    assert page1.json()["has_more"] is True
+    assert len(page1.json()["items"]) == 1
+
+    # Org B sees none of A's runs.
+    api_client.cookies.clear()
+    b = await api_client.post(
+        "/api/v1/auth/signup",
+        json={"email": "runs-b@example.com", "password": "Sup3rSecret!"},
+    )
+    b_list = await api_client.get("/api/v1/runs", headers=_headers(b.json()["access_token"]))
+    assert b_list.json()["total"] == 0
