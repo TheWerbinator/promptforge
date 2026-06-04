@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function Home() {
@@ -8,6 +10,20 @@ export default function Home() {
         Multi-tenant LLM prompt management and evaluation — versioned prompts, batch
         evals with four judge types, and live result streaming.
       </p>
+      <div className="flex gap-3">
+        <Link
+          href="/login"
+          className="rounded-md bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-900 hover:bg-white"
+        >
+          Log in
+        </Link>
+        <Link
+          href="/signup"
+          className="rounded-md border border-neutral-700 px-4 py-2 text-sm hover:bg-neutral-900"
+        >
+          Sign up
+        </Link>
+      </div>
       <p className="text-sm text-neutral-500">
         Frontend in progress. The API is live at{" "}
         <a
