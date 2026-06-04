@@ -161,3 +161,31 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   const data = res.status === 204 ? null : ((await res.json()) as T);
   return { ok: true, status: res.status, data, error: null };
 }
+
+/**
+ * Open an upstream SSE (or any streaming) response with the session's access
+ * token, refreshing once on a 401. Returns the raw upstream Response so a route
+ * handler can pipe `.body` straight to the browser. Use from a route handler.
+ */
+export async function apiStream(path: string): Promise<Response> {
+  const session = await readSession();
+  if (!session) return new Response("not authenticated", { status: 401 });
+
+  const open = (accessToken: string): Promise<Response> =>
+    fetch(`${API_URL}${path}`, {
+      headers: { authorization: `Bearer ${accessToken}`, accept: "text/event-stream" },
+      cache: "no-store",
+    });
+
+  let res = await open(session.accessToken);
+  if (res.status === 401) {
+    const refreshed = await refresh(session);
+    if (!refreshed) {
+      await clearSession();
+      return new Response("session expired", { status: 401 });
+    }
+    await writeSession(refreshed);
+    res = await open(refreshed.accessToken);
+  }
+  return res;
+}

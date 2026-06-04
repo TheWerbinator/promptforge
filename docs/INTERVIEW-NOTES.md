@@ -104,6 +104,14 @@ Next only lets you write cookies in a Server Action or Route Handler, not during
 
 Defense in depth with different jobs. `proxy.ts` (Next 16's renamed middleware) does a cheap edge presence-check on the session cookie and redirects before any render — fast, good UX, but it only knows "a cookie exists," and matchers can drift out of sync with the route tree. The `(app)/layout.tsx` server guard reads + (implicitly) validates the session and is the authoritative gate covering every page in the group regardless of matcher config. Proxy for speed, layout for correctness.
 
+## Why one generic data proxy (`/api/pf/[...path]`) instead of a route handler per endpoint?
+
+With the BFF, every data call still has to go through the server (to attach the token + refresh). Writing a hand-rolled handler for each of ~20 API endpoints would be a wall of near-identical boilerplate. A single catch-all proxy forwards method + body + query to `/api/v1/*` with the session applied and relays the JSON + status — so the client just calls `api.get("api/v1/prompts")` and the API keeps enforcing tenancy/authz. It's restricted to the `/api/v1/` prefix so it can't be used to reach arbitrary hosts, and the dedicated auth routes (login/signup/demo/logout) stay separate because they do cookie-sealing the generic proxy shouldn't.
+
+## Why consume SSE with fetch + a parser instead of the browser's EventSource?
+
+`EventSource` can't set request headers, and in the BFF the stream is authenticated server-side — so the browser opens an unauthenticated connection to the proxy (`/api/pf-stream/...`), which attaches the token and pipes the upstream `text/event-stream` through. On the client, reading that stream with `fetch` + `eventsource-parser` (rather than `EventSource`) gives control over the request, clean abort via `AbortController`, and no reliance on EventSource's auto-reconnect (which would re-open a finished batch's channel). The proxy sets `X-Accel-Buffering: no` + `no-transform` so neither Vercel nor Fly buffers the stream.
+
 ## Why openapi-typescript over orval / Kiota?
 
 Generates types only, not runtime code. Smaller bundle. My fetch wrapper is ~80 lines of code I can read and explain — vs adopting orval's hooks API which would hide auth + refresh logic behind abstraction. Right-size tool for the contract.
