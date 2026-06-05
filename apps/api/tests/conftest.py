@@ -68,7 +68,9 @@ def pg_container() -> Iterator["PostgresContainer"]:
     pytest.importorskip("testcontainers.postgres")
     from testcontainers.postgres import PostgresContainer
 
-    with PostgresContainer("postgres:17-alpine", driver="asyncpg") as container:
+    # pgvector image (not plain postgres) because migration 0009 creates the
+    # `vector` extension + vector columns for ragent's shared tables.
+    with PostgresContainer("pgvector/pgvector:pg17", driver="asyncpg") as container:
         yield container
 
 

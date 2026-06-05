@@ -33,6 +33,23 @@ def _async_db_url() -> str:
     return get_settings().async_database_url()
 
 
+def _include_object(
+    obj: object, name: str | None, type_: str, reflected: bool, compare_to: object
+) -> bool:
+    """Keep autogenerate from touching tables apps/api doesn't own.
+
+    apps/ragent's tables (corpora, documents, chunks, conversations, messages)
+    live in the same shared database but are not in apps/api's metadata. Without
+    this filter, `alembic revision --autogenerate` would diff the live DB against
+    api's metadata, not see those tables there, and emit DROP TABLE for them.
+    Ignoring any table not in our own metadata makes api a safe co-migrator of
+    the shared DB. (Affects autogenerate only; applying migrations is unaffected.)
+    """
+    if type_ == "table" and name not in target_metadata.tables:
+        return False
+    return True
+
+
 def run_migrations_offline() -> None:
     context.configure(
         url=_async_db_url(),
@@ -41,6 +58,7 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
         compare_server_default=True,
+        include_object=_include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -52,6 +70,7 @@ def do_run_migrations(connection: Connection) -> None:
         target_metadata=target_metadata,
         compare_type=True,
         compare_server_default=True,
+        include_object=_include_object,
     )
     with context.begin_transaction():
         context.run_migrations()

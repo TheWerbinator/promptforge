@@ -2,7 +2,9 @@ name: promptforge
 
 services:
   postgres:
-    image: postgres:17-alpine
+    # pgvector image (not plain postgres): migration 0009 enables the `vector`
+    # extension for ragent's shared tables.
+    image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: promptforge
       POSTGRES_PASSWORD: promptforge
