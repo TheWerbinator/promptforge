@@ -1,0 +1,58 @@
+# fly.toml for promptforge-ragent (apps/ragent).
+# See https://fly.io/docs/reference/configuration/.
+#
+# No [deploy] release_command: the DB schema + migration history are owned by
+# apps/api (single shared Postgres). ragent only reads/writes via the shared
+# models, it never migrates.
+
+app = 'promptforge-ragent'
+primary_region = 'ord'
+kill_signal = 'SIGINT'
+kill_timeout = '30s'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  PF_LOG_LEVEL = 'INFO'
+
+[processes]
+  # The ingest-worker process is added in Phase 4 (ingest worker); for now the
+  # service is the web/chat process only.
+  web = 'uvicorn promptforge_ragent.main:app --host 0.0.0.0 --port 8000'
+
+[[services]]
+  protocol = 'tcp'
+  internal_port = 8000
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['web']
+
+  [[services.ports]]
+    port = 80
+    handlers = ['http']
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ['tls', 'http']
+
+  [services.concurrency]
+    type = 'requests'
+    hard_limit = 250
+    soft_limit = 200
+
+  [[services.http_checks]]
+    interval = '10s'
+    timeout = '2s'
+    grace_period = '5s'
+    method = 'get'
+    path = '/health'
+    protocol = 'http'
+
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 512
+  processes = ['web']

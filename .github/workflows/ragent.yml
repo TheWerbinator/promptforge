@@ -1,0 +1,59 @@
+name: ragent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/ragent/**"
+      - ".github/workflows/ragent.yml"
+  pull_request:
+    paths:
+      - "apps/ragent/**"
+      - ".github/workflows/ragent.yml"
+
+defaults:
+  run:
+    working-directory: apps/ragent
+
+jobs:
+  lint-type-unit:
+    name: lint + types + unit tests (py ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+          cache-dependency-glob: "apps/ragent/pyproject.toml"
+
+      - name: Set up Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: Mypy strict
+        run: uv run mypy --strict promptforge_ragent
+
+      - name: Pytest (unit only)
+        run: uv run pytest -m "not integration and not e2e" --cov --cov-report=xml
+
+      - name: Upload coverage
+        if: matrix.python == '3.12'
+        uses: codecov/codecov-action@v6
+        with:
+          files: apps/ragent/coverage.xml
+          flags: ragent-unit
+          fail_ci_if_error: false
