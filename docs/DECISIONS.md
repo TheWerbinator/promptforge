@@ -501,3 +501,21 @@ The same read-perf tradeoff apps/api makes on `Run.org_id`. A tenant-scoped quer
 ## Why two nullable embedding columns with *partial* ivfflat indexes, instead of one column?
 
 A corpus pins exactly one embedding model, so a given chunk uses either the 1536-d (OpenAI) or the 384-d (bge) column and leaves the other NULL — separate typed columns keep each index's dimensionality fixed and clean (a single variable-dim column would complicate index management). The indexes are partial — `WHERE embedding_1536 IS NOT NULL` — so each ivfflat index only covers the rows that actually use that model, instead of wasting space and build time indexing a column that's NULL for every chunk belonging to the other-model corpora. If a third model ever joined, the clean move is a `chunk_embeddings(chunk_id, model, vector)` table rather than a third nullable column.
+
+# Phase 3 (ragent) — ingest pipeline
+
+## Why render markdown to HTML and flatten it, instead of embedding the raw markdown?
+
+Raw markdown carries syntax that's noise to an embedding model — `## `, `**`, `[text](url)`, table pipes — and it varies by author. Rendering with markdown-it-py and flattening the HTML (the same selectolax/lexbor path raw HTML uses) gives the *content*: `## Overview` becomes "Overview", a link becomes its anchor text, a list becomes its items. One code path covers both markdown and HTML, and the embedding sees prose, not formatting. The flatten joins inline runs with a space (so `Hello <b>world</b>` stays "Hello world") and then collapses whitespace.
+
+## Why fixed-size token windows for chunking, not sentence/semantic splitting?
+
+The unit that matters for an embedding model is tokens (its context budget), so I chunk on tokens directly: encode once with tiktoken's `cl100k_base` (what text-embedding-3-small uses) and slide a fixed window with overlap. It's deterministic and trivially testable — `target=512, overlap=64` means step 448, and the test pins the exact windows. The known cost is mid-sentence cuts, which the 64-token overlap softens (a fact straddling a boundary is retrievable from both windows). Sentence/heading-aware recursive splitting is the higher-quality next step; I left the decision and the upgrade path as a comment so it's a conscious tradeoff, not an oversight.
+
+## Why does embedding route on the corpus, and why is the local model just a seam right now?
+
+The corpus pins the embedding model, so `embed_texts` dispatches on `corpus.embedding_model` — that's what keeps the 1536-d and 384-d columns coherent (a corpus's chunks all use one model, one column, one partial index). The OpenAI path goes through litellm, same client/cost story as apps/api. The local bge-small path raises a `TODO(phase-12)` instead of being half-built: wiring it means sentence-transformers + torch, which is a couple GB of dependencies and a real cold-start cost on a 512 MB Fly machine — not something to drag in before the corpus/seed flow that actually exercises it. Raising keeps the routing contract honest (no silent wrong-dimension vectors) until Phase 12 adds the backend deliberately.
+
+## Why does ingest record a terminal status and *not* re-raise on failure?
+
+Same reasoning as apps/api's eval-runner. A failed ingest — unparseable PDF, unsupported type — is a *durable fact* about that document, so `ingest_document` writes `status=FAILED` with the error and returns, rather than throwing. Re-raising would let the (Phase 4) worker requeue the job and loop forever on a deterministic failure. The one nuance left for the worker is transient provider errors (rate limit, 5xx) during embedding, which *should* retry — tagged `TODO(phase-4)` to classify those as retriable before they reach the terminal-FAILED path. Re-ingest is idempotent (it deletes prior chunks first), so a retry or an edited document converges to exactly one clean set of chunks.
