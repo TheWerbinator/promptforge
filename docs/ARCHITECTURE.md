@@ -84,8 +84,10 @@ Next.js 15 App Router · React 19 · TypeScript strict · Tailwind · shadcn/ui 
 | `EvalSuite`, `EvalCase`, `EvalBatch`, `EvalResult` | Eval orchestration | ✓ phase 11 |
 | `DemoUsage` | Per-IP daily free-run counter (HMAC'd IP) — abuse/cost control | ✓ phase 13 |
 | `ShareToken` | Public read-only links (polymorphic: prompt or eval_batch; HMAC'd token) | ✓ phase 14 |
-| `Corpus`, `Document`, `Chunk` | ragent vector store (`embedding_1536` + `embedding_384` nullable cols) | pending |
-| `Conversation`, `Message` | Chat history | pending |
+| `Corpus`, `Document`, `Chunk` | ragent vector store (`embedding_1536` + `embedding_384` nullable cols + partial ivfflat indexes) | ✓ ragent phase 2 (migration `0009`) |
+| `Conversation`, `Message` | Chat history (citations + tool_calls JSONB) | ✓ ragent phase 2 |
+
+The five ragent entities are **defined in `apps/ragent/promptforge_ragent/models/`** (ragent's domain) but their table DDL lives in apps/api's migration history — apps/api is the single migrator for the shared DB. apps/api's `alembic/env.py` has an `include_object` guard so autogenerate ignores tables outside its own metadata. Because migration `0009` creates the `vector` extension, the testcontainers + compose Postgres image is `pgvector/pgvector:pg17` (Neon prod ships pgvector).
 
 Most carry `org_id` and go through `TenantRepository`. Exceptions are infrastructure tables: `Job` (internal queue) and `DemoUsage` (cross-org abuse control) deliberately sit outside tenancy. Routes use the `get_repo(Model)` dependency factory; direct `session.execute` in routes is a code smell.
 
