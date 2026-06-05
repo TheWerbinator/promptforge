@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Dark by default, no toggle (see docs/INTERVIEW-NOTES.md "Why dark mode default").
+/* Dark by default, no toggle (see docs/DECISIONS.md "Why dark mode default").
    Class-based dark variant so `dark:` utilities key off `.dark` on <html>, which
    the root layout always sets — rather than following the OS preference. */
 @custom-variant dark (&:where(.dark, .dark *));

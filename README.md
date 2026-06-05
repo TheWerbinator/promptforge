@@ -34,7 +34,7 @@ made deliberately and written down:
 - **Operability** — structured JSON logs with a request id on every line and the `X-Request-ID` response header, idempotent demo seeding wired into the deploy release step, zero-downtime migrations, and CI that gates lint + `mypy --strict` + the full test suite + coverage before it deploys.
 
 The reasoning behind each of these (and ~35 more decisions, with the alternatives
-I rejected and when I'd revisit) lives in **[docs/INTERVIEW-NOTES.md](docs/INTERVIEW-NOTES.md)** — it's the most useful file in the repo.
+I rejected and when I'd revisit) lives in **[docs/DECISIONS.md](docs/DECISIONS.md)** — it's the most useful file in the repo.
 
 ## Architecture
 
@@ -69,7 +69,7 @@ apps/
 ├── api/      FastAPI backend — auth, prompts, versions, runs, evals, queue, demo, shares
 ├── web/      Next.js 15 frontend — App Router, shadcn/ui, dark by default   (in progress)
 └── ragent/   RAG-agent service — 4 corpora, hybrid retrieval, ReAct loop    (in progress)
-docs/         ARCHITECTURE · INTERVIEW-NOTES · DEPLOY
+docs/         ARCHITECTURE · DECISIONS · DEPLOY
 infra/        docker compose for the full local stack
 ```
 

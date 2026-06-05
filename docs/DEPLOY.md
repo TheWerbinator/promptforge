@@ -10,7 +10,7 @@ The app is already provisioned (Phase 10.5). Day-to-day you just `git push` to `
 ## Topology
 
 - **Fly app** `promptforge-api`, region `ord`, two processes (`api` + `worker`) from one image.
-- **Database** Neon Postgres 17 + pgvector, **direct (session-mode)** endpoint. *Not* Fly Postgres — see INTERVIEW-NOTES "Why Neon over Fly Managed Postgres or Supabase". The DSN normalizer in `core/config.py` rewrites any provider DSN to `postgresql+asyncpg://`.
+- **Database** Neon Postgres 17 + pgvector, **direct (session-mode)** endpoint. *Not* Fly Postgres — see DECISIONS "Why Neon over Fly Managed Postgres or Supabase". The DSN normalizer in `core/config.py` rewrites any provider DSN to `postgresql+asyncpg://`.
 - **Release step** runs migrations then the idempotent demo seed (see `fly.toml [deploy]`).
 
 ## One-time setup
@@ -112,7 +112,7 @@ Structured logs (structlog) are JSON in prod, console when `PF_LOG_LEVEL=DEBUG`.
 Each line carries `request_id`; the same id is on the `X-Request-ID` response
 header. View: `fly logs --app promptforge-api`.
 
-OpenTelemetry tracing is deliberately not wired (see INTERVIEW-NOTES). The single
+OpenTelemetry tracing is deliberately not wired (see DECISIONS). The single
 enable point is the lifespan in `main.py`, gated on `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
 ## Roll back

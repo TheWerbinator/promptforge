@@ -1,6 +1,6 @@
 # PromptForge Architecture
 
-> System overview. Reasoning for every choice lives in [INTERVIEW-NOTES.md](INTERVIEW-NOTES.md). Current implementation progress lives in [PROGRESS.md](PROGRESS.md). Master plan in [../../PLAN.md](../../PLAN.md).
+> System overview. Reasoning for every choice lives in [DECISIONS.md](DECISIONS.md). Current implementation progress lives in [PROGRESS.md](PROGRESS.md). Master plan in [../../PLAN.md](../../PLAN.md).
 
 ## System diagram (target end state)
 

@@ -1,6 +1,6 @@
-# INTERVIEW-NOTES
+# DECISIONS
 
-> Defendable answers for every architectural choice in PromptForge. Read this before any AI Engineer interview. Each block is a 2-3 sentence quote you can use directly.
+> Defendable answers for every architectural choice in PromptForge.
 
 ---
 
@@ -67,6 +67,10 @@ Demonstrates flexibility without coupling indices. Variable-dim pgvector exists 
 ## Why ReAct loop over a more sophisticated planner?
 
 ReAct is the most-supported function-calling pattern in LiteLLM / OpenAI / Anthropic SDKs. It's transparent (every step is a tool call you can log/replay), and circuit breakers + max-iter caps make it safe. Planners (Plan-and-Execute, ReWOO, tree search) are higher-ceiling but lower-floor — easy to overfit a benchmark and fragile in production.
+
+## Why does ragent own no migrations, and share the `PF_` env prefix with apps/api?
+
+ragent and apps/api talk to the *same* Postgres, so the schema needs exactly one owner — apps/api owns the models and the Alembic history, ragent just reads/writes through the shared models. Two services migrating one database is how you get conflicting heads and a wedged deploy; making api the single migrator means ragent's deploy has no `release_command` and can never race a migration. The shared `PF_` env prefix is the same idea applied to config: `PF_DATABASE_URL` and `PF_JWT_SECRET` are literally the same secret values in both Fly apps, so there's one secret to rotate, not two that can drift. ragent adds only what's truly its own — `PF_API_BASE_URL` for the live system-prompt fetch.
 
 ## Why fetch system prompt from apps/api at runtime?
 

@@ -46,4 +46,4 @@ pushes to `main`. See [../../docs/DEPLOY.md](../../docs/DEPLOY.md).
 
 - **[../../docs/GUIDE.md](../../docs/GUIDE.md)** — what it does, the workflow, what you provide.
 - **[../../docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)** — system shape.
-- **[../../docs/INTERVIEW-NOTES.md](../../docs/INTERVIEW-NOTES.md)** — the "why" behind every choice.
+- **[../../docs/DECISIONS.md](../../docs/DECISIONS.md)** — the "why" behind every choice.

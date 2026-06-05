@@ -1,0 +1,89 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "promptforge-ragent"
+version = "0.1.0"
+description = "PromptForge RAG-agent service — hybrid retrieval + ReAct loop over the shared platform DB"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "Shawn Werber" }]
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "python-jose[cryptography]>=3.3",
+    "httpx>=0.27",
+    "structlog>=24.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-python-jose",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["promptforge_ragent"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "I", "B", "UP", "S", "A", "C4", "T20", "SIM", "RUF",
+    "ASYNC", "PT", "RET",
+]
+ignore = [
+    "S101",  # assert in tests is fine
+    "B008",  # FastAPI Depends() pattern
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S107"]  # passwords/secrets in fixtures fine
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+plugins = ["pydantic.mypy"]
+mypy_path = "."
+namespace_packages = true
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = ["jose.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--strict-markers --strict-config -ra"
+markers = [
+    "integration: marks tests requiring real Postgres (deselect with -m 'not integration')",
+    "e2e: marks full HTTP-flow tests",
+]
+
+[tool.coverage.run]
+source = ["promptforge_ragent"]
+branch = true
+omit = ["promptforge_ragent/workers/*"]
+
+[tool.coverage.report]
+precision = 1
+show_missing = true
+skip_empty = true
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
