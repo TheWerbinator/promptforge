@@ -9,15 +9,29 @@ honest rather than silently producing wrong-dimension vectors.
 from __future__ import annotations
 
 import litellm
+from litellm.exceptions import APIConnectionError, APIError, RateLimitError, Timeout
 
 from promptforge_ragent.core.config import get_settings
 from promptforge_ragent.models import EmbeddingModel
 
 _OPENAI_MODEL = "text-embedding-3-small"
 
+# Transient provider failures worth a retry — same set apps/api retries on.
+# Anything else (auth, invalid request, content policy) is terminal.
+_RETRYABLE: tuple[type[BaseException], ...] = (
+    APIConnectionError,
+    Timeout,
+    RateLimitError,
+    APIError,
+)
+
 
 class EmbeddingError(RuntimeError):
     """Raised when embedding fails or is misconfigured (terminal for ingest)."""
+
+
+class RetriableEmbeddingError(EmbeddingError):
+    """A transient provider failure — the ingest worker should requeue, not fail."""
 
 
 async def embed_texts(model: EmbeddingModel, texts: list[str]) -> list[list[float]]:
@@ -37,7 +51,9 @@ async def _embed_openai(texts: list[str]) -> list[list[float]]:
     key = settings.openai_api_key.get_secret_value() if settings.openai_api_key else None
     try:
         response = await litellm.aembedding(model=_OPENAI_MODEL, input=texts, api_key=key)
-    except Exception as exc:  # normalize any provider error into EmbeddingError
+    except _RETRYABLE as exc:  # transient → let the worker requeue with backoff
+        raise RetriableEmbeddingError(f"transient embedding failure: {exc}") from exc
+    except Exception as exc:  # terminal (auth, bad request, etc.)
         raise EmbeddingError(f"openai embedding call failed: {exc}") from exc
 
     vectors = [item["embedding"] for item in response.data]

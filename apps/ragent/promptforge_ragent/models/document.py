@@ -11,7 +11,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import BigInteger, ForeignKey, String, Text
+from sqlalchemy import BigInteger, ForeignKey, LargeBinary, String, Text
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -81,6 +81,10 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     # Populated when status=failed (parse error, embedding failure, etc.).
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Source file bytes, set by the producer (upload/seed) and read back by the
+    # detached ingest worker. Retained so re-ingest needs no re-upload. See
+    # migration 0010 + DECISIONS "Why store source bytes in the documents row".
+    raw_content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
 
     corpus: Mapped["Corpus"] = relationship(back_populates="documents")
     chunks: Mapped[list["Chunk"]] = relationship(

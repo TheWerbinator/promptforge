@@ -61,13 +61,15 @@ Two processes share a single Docker image: `api` (uvicorn) and `worker` (queue c
 
 **Routes (pending):** none for apps/api MVP — remaining work is seed (15), deploy/observability (16), README polish (17).
 
-### apps/ragent — RAG + agent service *(in active development — 3/14)*
+### apps/ragent — RAG + agent service *(in active development — 4/14)*
 
 Four corpora (3 seeded + user-uploadable). Per-corpus embedding model (OpenAI `text-embedding-3-small` 1536d or local `bge-small-en-v1.5` 384d). Hybrid retrieval (pgvector cosine + BM25 + RRF). Optional cross-encoder rerank. ReAct loop w/ 3 tools (`search_docs`, `fetch_passage`, `cite_sources`). Streams chat via SSE. Fetches system prompt from apps/api at runtime — real platform integration.
 
 **Stack:** FastAPI · SQLAlchemy 2.x async (shared DB, schema migrated by apps/api) · pgvector · litellm (embeddings + generation) · tiktoken (chunk sizing) · markdown-it-py + pypdf + selectolax (parsing) · structlog · uv · ruff · mypy strict · pytest + testcontainers (pgvector image). Shares the `PF_` config + HS256 secret with apps/api.
 
-**Modules so far:** `core/{config,logging,db}.py` (mirror api's). `models/` — Corpus/Document/Chunk/Conversation/Message (ragent owns these; apps/api migrates them). `services/` — the ingest pipeline: `parsing.extract_text` (per content type), `chunking.chunk_text` (token-window + overlap), `embeddings.embed_texts` (per-corpus routing; OpenAI live, bge = Phase-12 seam), `ingest.ingest_document` (parse→chunk→embed→persist orchestrator, idempotent, durable READY/FAILED). The ingest **worker** that drives `ingest_document` off a queue is Phase 4; retrieval/agent/chat are Phases 5–9.
+**Modules so far:** `core/{config,logging,db}.py` (mirror api's) + `core/queue.py` (trimmed SKIP-LOCKED client over apps/api's shared `jobs` table; raw SQL, no ORM Job model). `models/` — Corpus/Document/Chunk/Conversation/Message (ragent owns these; apps/api migrates them). `services/` — the ingest pipeline: `parsing.extract_text` (per content type), `chunking.chunk_text` (token-window + overlap), `embeddings.embed_texts` (per-corpus routing; OpenAI live, bge = Phase-12 seam; transient errors → `RetriableEmbeddingError`), `ingest.ingest_document` (parse→chunk→embed→persist orchestrator, idempotent, durable READY/FAILED, re-raises transient for requeue). `workers/ingest_worker.py` — second Fly process, claims `kind="ingest_document"`, drives `ingest_document` from `documents.raw_content`, marks FAILED only on the final retry. Retrieval/agent/chat are Phases 5–9.
+
+**Queue:** ragent shares apps/api's `jobs` table (migration 0004) rather than standing up its own — `kind="ingest_document"` for ingest, `kind="eval_case"` for api's eval worker, one table, two consumers filtered by kind. Requeue backoff is computed with the DB clock (`now() + make_interval`) so it's correct under host/container clock drift.
 
 ### apps/web — Next.js frontend *(not started)*
 
@@ -91,7 +93,7 @@ Next.js 15 App Router · React 19 · TypeScript strict · Tailwind · shadcn/ui 
 | `Corpus`, `Document`, `Chunk` | ragent vector store (`embedding_1536` + `embedding_384` nullable cols + partial ivfflat indexes) | ✓ ragent phase 2 (migration `0009`) |
 | `Conversation`, `Message` | Chat history (citations + tool_calls JSONB) | ✓ ragent phase 2 |
 
-The five ragent entities are **defined in `apps/ragent/promptforge_ragent/models/`** (ragent's domain) but their table DDL lives in apps/api's migration history — apps/api is the single migrator for the shared DB. apps/api's `alembic/env.py` has an `include_object` guard so autogenerate ignores tables outside its own metadata. Because migration `0009` creates the `vector` extension, the testcontainers + compose Postgres image is `pgvector/pgvector:pg17` (Neon prod ships pgvector).
+The five ragent entities are **defined in `apps/ragent/promptforge_ragent/models/`** (ragent's domain) but their table DDL lives in apps/api's migration history — apps/api is the single migrator for the shared DB. apps/api's `alembic/env.py` has an `include_object` guard so autogenerate ignores tables outside its own metadata. Because migration `0009` creates the `vector` extension, the testcontainers + compose Postgres image is `pgvector/pgvector:pg17` (Neon prod ships pgvector). Migration `0010` adds `documents.raw_content` (BYTEA) — the source bytes the detached ingest worker reads. ragent also reuses apps/api's `jobs` table (no new queue table) for ingest jobs.
 
 Most carry `org_id` and go through `TenantRepository`. Exceptions are infrastructure tables: `Job` (internal queue) and `DemoUsage` (cross-org abuse control) deliberately sit outside tenancy. Routes use the `get_repo(Model)` dependency factory; direct `session.execute` in routes is a code smell.
 

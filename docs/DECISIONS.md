@@ -518,4 +518,22 @@ The corpus pins the embedding model, so `embed_texts` dispatches on `corpus.embe
 
 ## Why does ingest record a terminal status and *not* re-raise on failure?
 
-Same reasoning as apps/api's eval-runner. A failed ingest — unparseable PDF, unsupported type — is a *durable fact* about that document, so `ingest_document` writes `status=FAILED` with the error and returns, rather than throwing. Re-raising would let the (Phase 4) worker requeue the job and loop forever on a deterministic failure. The one nuance left for the worker is transient provider errors (rate limit, 5xx) during embedding, which *should* retry — tagged `TODO(phase-4)` to classify those as retriable before they reach the terminal-FAILED path. Re-ingest is idempotent (it deletes prior chunks first), so a retry or an edited document converges to exactly one clean set of chunks.
+Same reasoning as apps/api's eval-runner. A failed ingest — unparseable PDF, unsupported type — is a *durable fact* about that document, so `ingest_document` writes `status=FAILED` with the error and returns, rather than throwing. Re-raising would let the worker requeue the job and loop forever on a deterministic failure. The one exception is a *transient* provider error during embedding (rate limit, 5xx), which surfaces as `RetriableEmbeddingError` and *is* re-raised so the worker requeues it (Phase 4). Re-ingest is idempotent (it deletes prior chunks first), so a retry or an edited document converges to exactly one clean set of chunks.
+
+# Phase 4 (ragent) — ingest worker
+
+## Why does ragent reuse apps/api's `jobs` table instead of its own queue?
+
+The platform already has one Postgres job queue (apps/api's `jobs` table, SKIP LOCKED, migration 0004), and the one-DB principle says don't add a second queue substrate for a second producer. ragent enqueues `kind="ingest_document"`; apps/api's eval worker only claims `kind="eval_case"`. Two consumers filtering one table by kind is exactly what the `kind` column is for, and it means no new table, no second migration owner, no Redis. ragent's queue *client* is its own (a trimmed copy of api's — enqueue/claim/ack/requeue, no batch-SSE fanout) because the table is shared but the code isn't importable across the two packages — the same ownership split as the models. It uses raw `text()` SQL, so ragent doesn't even need to model a `Job` table it doesn't migrate.
+
+## Why store the source bytes in `documents.raw_content` (BYTEA in Postgres)?
+
+The ingest worker is *detached* from whatever produced the document — an upload handler or the seed — so it can't be handed the bytes in-process; it has to read them back from the row. `raw_content` holds the original file bytes, and the worker parses → chunks → embeds from it. Keeping them after ingest means a re-ingest (re-chunk with new params, re-embed after a model change) needs no re-upload. At the demo's 5 MB/file cap, bytea in Postgres is the simplest correct choice — no object store to provision or secure. Object storage (S3/R2) with the row holding only a key is the documented path if file sizes or corpus volume grew.
+
+## Why compute requeue backoff with the database clock, not the app clock?
+
+The requeue sets `run_after` to "now + backoff" and the claim query filters `run_after <= now()` — if those two `now`s come from different clocks, backoff breaks. The first version computed `run_after` in Python (`datetime.now(UTC) + 2s`) while the claim compared against Postgres `now()`; under Docker Desktop / WSL2 the container clock can run *ahead* of the host, so a host-computed `run_after` was already in the container's past and the "backed-off" job was immediately re-claimable. Computing it DB-side (`now() + make_interval(secs => :n)`) uses one clock for both set and compare, so backoff is correct regardless of host/container skew. A test caught this — the kind of bug that hides until someone runs on a drifting clock.
+
+## Why mark the document FAILED only on the worker's *last* attempt?
+
+A transient embedding error should retry, so `ingest_document` re-raises it without recording a terminal status, and the `ClaimedJob` context manager turns that raise into a requeue-with-backoff. But if every attempt keeps failing transiently, the document would otherwise sit in INGESTING forever. So the worker checks `ClaimedJob.is_last_attempt`: on the final try it records a durable `FAILED` (with reason) and acks the job, instead of re-raising. Transient failures retry; exhausted retries become a visible terminal failure — no document left limbo. And `_run_one` swallows+logs after the context manager has already recorded ack/requeue, so a re-raised transient can't kill the consume loop.

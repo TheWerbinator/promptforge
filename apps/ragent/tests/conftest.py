@@ -100,6 +100,27 @@ async def _schema(pg_url: str) -> None:
     engine = create_async_engine(pg_url, future=True)
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        # Stub of apps/api's `jobs` table (migration 0004) — just the columns
+        # ragent's queue client touches. The real table is api-owned; ragent
+        # shares it in every non-test environment.
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS jobs ("
+                "  id BIGSERIAL PRIMARY KEY,"
+                "  kind TEXT NOT NULL,"
+                "  payload JSONB NOT NULL DEFAULT '{}'::jsonb,"
+                "  batch_id UUID,"
+                "  status TEXT NOT NULL DEFAULT 'queued',"
+                "  attempts INTEGER NOT NULL DEFAULT 0,"
+                "  max_attempts INTEGER NOT NULL DEFAULT 3,"
+                "  run_after TIMESTAMPTZ NOT NULL DEFAULT now(),"
+                "  claimed_at TIMESTAMPTZ,"
+                "  finished_at TIMESTAMPTZ,"
+                "  error TEXT,"
+                "  created_at TIMESTAMPTZ NOT NULL DEFAULT now()"
+                ")"
+            )
+        )
         await conn.run_sync(Base.metadata.create_all)
     await engine.dispose()
 
@@ -119,4 +140,35 @@ async def db_session(pg_url: str, _schema: None) -> AsyncIterator[AsyncSession]:
             await session.close()
             await trans.rollback()
 
-    await engine.dispose()
+
+@pytest_asyncio.fixture
+async def committed_db(
+    pg_url: str, _schema: None, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """Real (committing) session factory for queue/worker tests.
+
+    The queue and worker open their own sessions and COMMIT (a worker must see
+    what an enqueuer wrote), so rollback isolation won't do. This points ragent's
+    module-global engine at the container and truncates the touched tables after
+    each test. Yields the global session factory the queue/worker also use.
+    """
+    from promptforge_ragent.core.db import dispose_engine, get_session_factory
+
+    monkeypatch.setenv("PF_DATABASE_URL", pg_url)
+    monkeypatch.setenv("PF_JWT_SECRET", "a" * 48)
+    get_settings.cache_clear()
+    await dispose_engine()  # rebuild the global engine against the container
+
+    factory = get_session_factory()
+    try:
+        yield factory
+    finally:
+        async with factory() as session:
+            await session.execute(
+                text(
+                    "TRUNCATE jobs, chunks, documents, corpora, orgs, users "
+                    "RESTART IDENTITY CASCADE"
+                )
+            )
+            await session.commit()
+        await dispose_engine()
