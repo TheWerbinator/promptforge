@@ -35,6 +35,17 @@ class Settings(BaseSettings):
     api_base_url: str = "http://localhost:8000"
     # Cache the fetched system prompt this long to bound load on apps/api.
     system_prompt_cache_seconds: int = 60
+    # The prompt version apps/api serves as ragent's system prompt. Set by the
+    # seed/deploy; when unset (or the fetch fails) the agent uses a built-in
+    # default so it still works. service_* are the demo principal ragent mints a
+    # short-lived JWT for (shared HS256 secret) to authenticate the version fetch.
+    system_prompt_version_id: str | None = None
+    service_org_id: str | None = None
+    service_user_id: str | None = None
+
+    # litellm model for the agent's reasoning loop.
+    agent_model: str = "gpt-4o-mini"
+    agent_max_iterations: int = 6
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     cors_origins: list[str] = Field(default_factory=list)

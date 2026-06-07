@@ -575,3 +575,21 @@ In a ReAct loop the tool result is fed back to the model as the next observation
 ## Why are the tools corpus- and org-scoped at the handler, and why drop foreign ids silently?
 
 The tools are the only surface the model can reach the database through, so tenant enforcement lives right there: every read filters `corpus_id` + `org_id`, and `fetch_passage`/`cite_sources` reject ids that resolve to another corpus. `cite_sources` *drops* out-of-corpus ids rather than erroring the whole call — a model that hallucinates one bad id among several good ones should still get a useful citation set, and silently excluding the bad one is safer than surfacing "this id exists elsewhere" (which would leak that another org has a chunk by that id). The requested order is preserved for the ids that are valid, so the citation list reflects the model's own ranking.
+
+# Phase 8 (ragent) — agent loop + live system prompt
+
+## Why a max-iteration cap *and* a duplicate-call circuit breaker?
+
+They catch two different stuck states. The max-iteration cap bounds total cost and latency — a model that keeps finding "one more thing to check" can't run forever. The circuit breaker catches the more insidious failure: a model that calls the *same tool with the same arguments* over and over (it didn't like the result, but asks again identically). The cap alone would let it burn all six iterations on the identical call; the breaker trips after two repeats (tracked by a `name:sorted-args` signature) and short-circuits. Each duplicate is fed back as an error observation first, giving the model a chance to change course before the breaker fires. These are the safety rails that make ReAct production-safe — the transparency of the pattern is worthless if a bad turn can loop unbounded.
+
+## Why force a tool-less completion when a rail fires, instead of returning the transcript?
+
+When the cap or breaker trips, the loop has a pile of tool results but no answer the user can read. Returning that raw, or an empty string, is a bad experience. Instead it makes one final completion with the tools removed and a "answer now from what you have" instruction, so the user gets a coherent (if `truncated: True`) answer grounded in whatever was gathered. One extra call is a cheap price for never surfacing a dead-ended turn.
+
+## Why is `run_agent` an async generator of events rather than a function returning an answer?
+
+The chat route (Phase 9) needs to stream the agent's progress over SSE — tool-call chips as they happen, then the answer — so the loop yields small JSON events (`tool_call`, `tool_result`, `answer`) as it goes. A function that returned only the final answer would force Phase 9 to either lose the intermediate steps or re-derive them. Emitting events also keeps the loop the single source of truth for "what happened this turn," and makes it directly testable: collect the events and assert the sequence, no SSE plumbing needed. Citations declared via `cite_sources` are attached to the terminal `answer` event so the consumer gets answer + sources together.
+
+## Why fetch the system prompt with a minted service JWT, cache it, and fall back to a default?
+
+The live fetch is the platform-integration story — the agent's behavior is governed by a prompt managed in PromptForge — but it has to be both authenticated and robust. ragent authenticates by minting a short-lived access JWT with the *shared HS256 secret* for a configured service principal (the demo org/user), so apps/api validates it like any token with no extra round-trip — the same-secret, same-control rationale from the auth design. The result is TTL-cached so the agent isn't hitting apps/api on every message. And it falls back to a built-in `DEFAULT_SYSTEM_PROMPT` whenever the prompt isn't configured yet (the seed wires the id later) or the fetch fails — a managed-prompt feature must never be able to take the agent down, so a transient apps/api outage degrades to the default rather than erroring. Successful fetches (and the unconfigured default) are cached; a *failed* fetch is not, so the agent recovers on the next request once apps/api is back.
