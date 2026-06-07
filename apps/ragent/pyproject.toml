@@ -27,6 +27,7 @@ dependencies = [
     "markdown-it-py>=3",
     "pypdf>=4",
     "selectolax>=0.3",
+    "rank-bm25>=0.2",
 ]
 
 [project.optional-dependencies]
@@ -69,7 +70,7 @@ namespace_packages = true
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-module = ["jose.*", "pgvector.*", "litellm.*", "selectolax.*"]
+module = ["jose.*", "pgvector.*", "litellm.*", "selectolax.*", "rank_bm25.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

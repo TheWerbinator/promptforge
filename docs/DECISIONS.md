@@ -537,3 +537,17 @@ The requeue sets `run_after` to "now + backoff" and the claim query filters `run
 ## Why mark the document FAILED only on the worker's *last* attempt?
 
 A transient embedding error should retry, so `ingest_document` re-raises it without recording a terminal status, and the `ClaimedJob` context manager turns that raise into a requeue-with-backoff. But if every attempt keeps failing transiently, the document would otherwise sit in INGESTING forever. So the worker checks `ClaimedJob.is_last_attempt`: on the final try it records a durable `FAILED` (with reason) and acks the job, instead of re-raising. Transient failures retry; exhausted retries become a visible terminal failure — no document left limbo. And `_run_one` swallows+logs after the context manager has already recorded ack/requeue, so a re-raised transient can't kill the consume loop.
+
+# Phase 5 (ragent) — hybrid retrieval
+
+## Why BM25 in-process (rank-bm25) instead of Postgres full-text search?
+
+The sparse half could be Postgres `tsvector`/`ts_rank`, but BM25 is the better-understood lexical ranker and rank-bm25 keeps it transparent — I can see and tune the scoring instead of reasoning about Postgres FTS config (dictionaries, weights, `ts_rank` vs `ts_rank_cd`). It also keeps a `tsvector` column and its GIN index out of the schema. The cost is that the BM25 index is built per query from the corpus's chunk texts, which is fine at demo scale (hundreds–thousands of chunks); the documented optimization is a per-corpus cached index invalidated on ingest, or switching the sparse tier to Postgres FTS if corpora outgrow in-process memory.
+
+## Why fuse on ranks (RRF) and keep only positive-scoring sparse hits?
+
+RRF combines the dense and sparse lists using only each item's *rank position*, so there's nothing to normalize between a cosine distance (0–2) and a BM25 score (unbounded) — the reason RRF is robust to score-scale differences. Before fusing, the sparse list drops zero-score chunks: a BM25 score of 0 means the query shares no terms with the chunk, so including it would just pad the lexical list with non-matches and dilute the signal RRF is meant to capture. Dense always contributes its top-k by distance; sparse contributes only genuine lexical matches. An integration test pins the payoff: a chunk that's semantically far from the query embedding but shares keywords is lifted above a chunk that's exactly as far but shares none — which pure dense retrieval could never do.
+
+## Why scope retrieval by both corpus_id and org_id?
+
+The caller resolves the `Corpus` within the tenant, and chunks carry a denormalized `corpus_id`, so `corpus_id` alone is functionally sufficient. Adding `org_id` to the dense and sparse `WHERE` clauses is defense-in-depth: retrieval is the hot path the agent will call on every turn, and a belt-and-suspenders tenant filter there means a future bug that hands in a mis-scoped corpus still can't leak another org's chunks. Both columns are indexed, so it's free.
