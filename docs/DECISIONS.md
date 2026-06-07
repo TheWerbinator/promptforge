@@ -561,3 +561,17 @@ A cross-encoder (bge-reranker-base) genuinely improves ordering — it scores ea
 ## Why lazy-import + thread-offload the model when enabled?
 
 The `from sentence_transformers import CrossEncoder` lives inside the scoring function, not at module top, so importing `rerank.py` (and running the whole test suite / the disabled path) never touches torch — only the first enabled call does, and the loaded model is cached in a module singleton after that. Inference is CPU-bound and synchronous, so `rerank` runs it via `asyncio.to_thread`; otherwise a multi-hundred-ms `predict()` would block the event loop and stall every other concurrent request the agent service is handling.
+
+# Phase 7 (ragent) — agent tools
+
+## Why these three tools (search / fetch / cite), split this way?
+
+They map to the three distinct things a grounded-answer agent actually does, and keeping them separate keeps each ReAct step legible. `search_docs` returns *ranked snippets* — small, so the model can scan many candidates cheaply without blowing the context window. `fetch_passage` exists precisely because the snippets are truncated: when one looks promising, the model pulls its full text on demand instead of every result shipping its whole body. `cite_sources` is its own tool, not an inferred side effect of search, because grounding should be an explicit act — the model declares the chunk_ids its answer rests on, and that becomes the message's citations (the source drawer in the UI). Folding citation into search would cite everything retrieved, including passages the model looked at and discarded.
+
+## Why do tool handlers return `{"error": ...}` dicts instead of raising?
+
+In a ReAct loop the tool result is fed back to the model as the next observation, so an error is *information the model can act on* — "that chunk_id wasn't valid, search again" — not a failure that should abort the turn. A raised exception would unwind the loop and kill the whole response; an error dict lets the model self-correct on the next step, which is the entire point of the agent pattern. So every handler validates its arguments (the LLM routinely sends malformed args) and returns a structured error rather than throwing. The loop's own safety rails — max iterations, circuit breaker — are what bound a model that keeps erroring, not exceptions from the tools.
+
+## Why are the tools corpus- and org-scoped at the handler, and why drop foreign ids silently?
+
+The tools are the only surface the model can reach the database through, so tenant enforcement lives right there: every read filters `corpus_id` + `org_id`, and `fetch_passage`/`cite_sources` reject ids that resolve to another corpus. `cite_sources` *drops* out-of-corpus ids rather than erroring the whole call — a model that hallucinates one bad id among several good ones should still get a useful citation set, and silently excluding the bad one is safer than surfacing "this id exists elsewhere" (which would leak that another org has a chunk by that id). The requested order is preserved for the ids that are valid, so the citation list reflects the model's own ranking.
