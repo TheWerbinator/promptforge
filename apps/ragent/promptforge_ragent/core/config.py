@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     anthropic_api_key: SecretStr | None = None
 
+    # Cross-encoder rerank is off by default: it pulls sentence-transformers/torch
+    # (the `rerank` optional extra) and a model load, which a zero-traffic demo
+    # shouldn't carry. Enable + install the extra + size up the machine to use it.
+    rerank_enabled: bool = False
+    rerank_model: str = "BAAI/bge-reranker-base"
+
     def async_database_url(self) -> str:
         """Return a SQLAlchemy DSN guaranteed to use the asyncpg driver.
 
