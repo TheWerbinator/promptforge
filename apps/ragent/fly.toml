@@ -17,9 +17,10 @@ kill_timeout = '30s'
   PF_LOG_LEVEL = 'INFO'
 
 [processes]
-  # The ingest-worker process is added in Phase 4 (ingest worker); for now the
-  # service is the web/chat process only.
   web = 'uvicorn promptforge_ragent.main:app --host 0.0.0.0 --port 8000'
+  # Claims kind="ingest_document" off the shared Postgres queue. Same image, second
+  # scale dial — scale to 0 when no ingestion is happening (like apps/api's worker).
+  ingest-worker = 'python -m promptforge_ragent.workers.ingest_worker'
 
 [[services]]
   protocol = 'tcp'
@@ -56,3 +57,9 @@ kill_timeout = '30s'
   cpus = 1
   memory_mb = 512
   processes = ['web']
+
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 512
+  processes = ['ingest-worker']

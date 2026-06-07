@@ -8,8 +8,10 @@ something to requeue forever. The vector lands in the column matching the
 corpus's embedding dimension (1536 → `embedding_1536`, 384 → `embedding_384`);
 the other stays NULL, which is what the partial ivfflat indexes rely on.
 
-# TODO(phase-4): classify transient provider errors (rate limit, 5xx) as
-# retriable so the worker requeues them instead of marking the document FAILED.
+Transient provider failures are different: they surface as
+`RetriableEmbeddingError` and are re-raised (not recorded as FAILED) so the
+ingest worker requeues them with backoff, marking the document FAILED only once
+retries are exhausted.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from promptforge_ragent.models import Chunk, Corpus, Document, DocumentStatus
 from promptforge_ragent.services.chunking import chunk_text
-from promptforge_ragent.services.embeddings import embed_texts
+from promptforge_ragent.services.embeddings import RetriableEmbeddingError, embed_texts
 from promptforge_ragent.services.parsing import extract_text
 
 log = structlog.get_logger("promptforge.ragent.ingest")
@@ -69,6 +71,12 @@ async def ingest_document(session: AsyncSession, document: Document, data: bytes
         await session.flush()
         log.info("ingested", document_id=str(document.id), chunks=len(chunks))
         return len(chunks)
+    except RetriableEmbeddingError:
+        # Transient — don't record a terminal status. Re-raise so the worker
+        # requeues (the caller rolls back the INGESTING flush). The worker marks
+        # the document FAILED only once retries are exhausted.
+        log.info("ingest_retriable", document_id=str(document.id))
+        raise
     except Exception as exc:  # terminal record (see module docstring), not re-raised
         document.status = DocumentStatus.FAILED
         document.error = str(exc)[:2000]
