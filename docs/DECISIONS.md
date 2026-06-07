@@ -551,3 +551,13 @@ RRF combines the dense and sparse lists using only each item's *rank position*, 
 ## Why scope retrieval by both corpus_id and org_id?
 
 The caller resolves the `Corpus` within the tenant, and chunks carry a denormalized `corpus_id`, so `corpus_id` alone is functionally sufficient. Adding `org_id` to the dense and sparse `WHERE` clauses is defense-in-depth: retrieval is the hot path the agent will call on every turn, and a belt-and-suspenders tenant filter there means a future bug that hands in a mis-scoped corpus still can't leak another org's chunks. Both columns are indexed, so it's free.
+
+# Phase 6 (ragent) — optional cross-encoder rerank
+
+## Why is the cross-encoder reranker off by default and behind an optional extra?
+
+A cross-encoder (bge-reranker-base) genuinely improves ordering — it scores each (query, chunk) pair with full cross-attention instead of comparing pre-computed embeddings — but it pulls `sentence-transformers` + torch (a couple GB) and loads a model into memory. On a zero-traffic demo running shared-cpu-1x / 512 MB on Fly, that's a large, mostly-idle cost. So rerank ships as a *seam*: `PF_RERANK_ENABLED` defaults false (rerank is a passthrough that leaves the RRF order intact), and the dependency lives in an optional `rerank` extra that neither CI nor the default Docker image installs. Enabling it is a deliberate act — install the extra, flip the flag, size up the machine. Same judgment as deferring OpenTelemetry and the local bge embedding backend: wire the high-value-when-needed capability behind a clean, documented switch rather than carry the weight unconditionally. The interface is fully tested (passthrough, truncation, and — with the scorer mocked — the reorder logic) without ever importing torch.
+
+## Why lazy-import + thread-offload the model when enabled?
+
+The `from sentence_transformers import CrossEncoder` lives inside the scoring function, not at module top, so importing `rerank.py` (and running the whole test suite / the disabled path) never touches torch — only the first enabled call does, and the loaded model is cached in a module singleton after that. Inference is CPU-bound and synchronous, so `rerank` runs it via `asyncio.to_thread`; otherwise a multi-hundred-ms `predict()` would block the event loop and stall every other concurrent request the agent service is handling.
