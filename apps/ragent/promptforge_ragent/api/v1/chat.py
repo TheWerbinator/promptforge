@@ -19,7 +19,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,12 +27,20 @@ from sse_starlette.sse import EventSourceResponse
 
 from promptforge_ragent.agent.loop import run_agent
 from promptforge_ragent.agent.tools import ToolContext
-from promptforge_ragent.core.db import get_session_factory
+from promptforge_ragent.core.db import get_session, get_session_factory
 from promptforge_ragent.core.deps import Principal, get_principal
 from promptforge_ragent.models import Conversation, Corpus, Message, MessageRole
+from promptforge_ragent.services.demo_quota import (
+    client_ip,
+    free_turns_remaining,
+    hmac_ip,
+    record_free_turn,
+)
 from promptforge_ragent.services.system_prompt import get_system_prompt
 
 router = APIRouter(tags=["chat"])
+
+_DEMO_ROLE = "demo"
 
 
 class ChatRequest(BaseModel):
@@ -79,7 +87,10 @@ async def _load_history(session: AsyncSession, conversation_id: UUID) -> list[di
 
 
 async def _chat_events(
-    principal: Principal, body: ChatRequest, provider_key: str | None
+    principal: Principal,
+    body: ChatRequest,
+    provider_key: str | None,
+    free_demo_ip_hmac: str | None,
 ) -> AsyncIterator[dict[str, str]]:
     if not body.message.strip():
         yield _sse("error", {"error": "message must not be empty"})
@@ -163,6 +174,9 @@ async def _chat_events(
                     tool_calls=tool_trail or None,
                 )
             )
+            # Count a free demo turn only when one actually produced an answer.
+            if free_demo_ip_hmac is not None:
+                await record_free_turn(session, free_demo_ip_hmac)
             await session.commit()
 
         yield _sse("done", {})
@@ -171,8 +185,26 @@ async def _chat_events(
 @router.post("/chat")
 async def chat(
     body: ChatRequest,
+    request: Request,
     principal: Principal = Depends(get_principal),
     x_provider_key: str | None = Header(default=None),
+    session: AsyncSession = Depends(get_session),
 ) -> EventSourceResponse:
-    """Run one agent turn over the corpus and stream the result as SSE."""
-    return EventSourceResponse(_chat_events(principal, body, x_provider_key))
+    """Run one agent turn over the corpus and stream the result as SSE.
+
+    Demo visitors run on the hosted key only while free turns remain (per-IP +
+    global daily caps); once exhausted they must BYOK (`X-Provider-Key`) or get a
+    402. Owners/members always use the hosted key. The 402 is raised here, before
+    streaming starts — once the SSE response is open the status is already 200.
+    """
+    free_demo_ip_hmac: str | None = None
+    if principal.role == _DEMO_ROLE and not x_provider_key:
+        ip_hmac = hmac_ip(client_ip(request))
+        if await free_turns_remaining(session, ip_hmac) <= 0:
+            raise HTTPException(
+                status.HTTP_402_PAYMENT_REQUIRED,
+                "free demo turns exhausted — add an X-Provider-Key header to continue",
+            )
+        free_demo_ip_hmac = ip_hmac  # record the turn once it produces an answer
+
+    return EventSourceResponse(_chat_events(principal, body, x_provider_key, free_demo_ip_hmac))

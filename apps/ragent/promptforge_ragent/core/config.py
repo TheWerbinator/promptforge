@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     max_file_bytes: int = 5 * 1024 * 1024  # 5 MB/file
     max_corpus_bytes: int = 50 * 1024 * 1024  # 50 MB/corpus
 
+    # Demo cost control: free hosted-key agent turns before BYOK is required.
+    # Per-IP for UX/casual abuse; global as the backstop against IP/VPN rotation.
+    demo_free_turns_per_ip: int = 3
+    demo_free_turns_global: int = 200
+
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     cors_origins: list[str] = Field(default_factory=list)
 
