@@ -10,14 +10,17 @@ from promptforge_ragent.models.base import Base
 from promptforge_ragent.models.chunk import Chunk
 from promptforge_ragent.models.conversation import Conversation
 from promptforge_ragent.models.corpus import Corpus, EmbeddingModel
+from promptforge_ragent.models.demo_usage import GLOBAL_USAGE_KEY, DemoUsage
 from promptforge_ragent.models.document import Document, DocumentContentType, DocumentStatus
 from promptforge_ragent.models.message import Message, MessageRole
 
 __all__ = [
+    "GLOBAL_USAGE_KEY",
     "Base",
     "Chunk",
     "Conversation",
     "Corpus",
+    "DemoUsage",
     "Document",
     "DocumentContentType",
     "DocumentStatus",

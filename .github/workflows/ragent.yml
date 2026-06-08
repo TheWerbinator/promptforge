@@ -60,3 +60,58 @@ jobs:
           files: apps/ragent/coverage.xml
           flags: ragent-unit
           fail_ci_if_error: false
+
+  tests:
+    name: full suite (Postgres+pgvector via testcontainers)
+    runs-on: ubuntu-latest
+    needs: lint-type-unit
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "apps/ragent/pyproject.toml"
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Pytest (full suite)
+        # Unit + integration + e2e. testcontainers pulls pgvector/pgvector:pg17;
+        # all external calls (litellm, embeddings, sentence-transformers) are
+        # mocked, so no provider secrets are needed in CI.
+        run: uv run pytest --cov --cov-report=xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v6
+        with:
+          files: apps/ragent/coverage.xml
+          flags: ragent
+          fail_ci_if_error: false
+
+  deploy:
+    name: deploy to fly.io
+    runs-on: ubuntu-latest
+    # Only push events on main, after lint + the full suite pass. PRs don't deploy.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint-type-unit, tests]
+    concurrency:
+      group: fly-deploy-ragent-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy
+        # defaults.run.working-directory is apps/ragent, so fly.toml + Dockerfile
+        # are in cwd. ragent has NO release_command (it never migrates; the corpora
+        # seed is a documented one-time manual step — see docs/DEPLOY.md).
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

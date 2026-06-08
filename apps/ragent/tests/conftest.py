@@ -200,7 +200,8 @@ async def committed_db(
             await session.execute(
                 text(
                     "TRUNCATE jobs, chunks, documents, corpora, orgs, users, "
-                    "memberships, prompts, prompt_versions RESTART IDENTITY CASCADE"
+                    "memberships, prompts, prompt_versions, ragent_demo_usage "
+                    "RESTART IDENTITY CASCADE"
                 )
             )
             await session.commit()
