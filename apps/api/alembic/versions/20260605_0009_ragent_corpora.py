@@ -38,15 +38,9 @@ def upgrade() -> None:
         "bge_small_en_v1_5",
         name="embedding_model",
     )
-    content_type = postgresql.ENUM(
-        "markdown", "pdf", "html", "text", name="document_content_type"
-    )
-    doc_status = postgresql.ENUM(
-        "pending", "ingesting", "ready", "failed", name="document_status"
-    )
-    message_role = postgresql.ENUM(
-        "user", "assistant", "tool", "system", name="message_role"
-    )
+    content_type = postgresql.ENUM("markdown", "pdf", "html", "text", name="document_content_type")
+    doc_status = postgresql.ENUM("pending", "ingesting", "ready", "failed", name="document_status")
+    message_role = postgresql.ENUM("user", "assistant", "tool", "system", name="message_role")
 
     op.create_table(
         "corpora",
@@ -57,10 +51,24 @@ def upgrade() -> None:
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("embedding_model", embedding_model, nullable=False),
         sa.Column("created_by", postgresql.UUID(as_uuid=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["org_id"], ["orgs.id"], name="fk_corpora_org_id_orgs", ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["created_by"], ["users.id"], name="fk_corpora_created_by_users", ondelete="SET NULL"),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["org_id"], ["orgs.id"], name="fk_corpora_org_id_orgs", ondelete="CASCADE"
+        ),
+        sa.ForeignKeyConstraint(
+            ["created_by"], ["users.id"], name="fk_corpora_created_by_users", ondelete="SET NULL"
+        ),
         sa.PrimaryKeyConstraint("id", name="pk_corpora"),
         sa.UniqueConstraint("org_id", "slug", name="uq_corpora_org_slug"),
     )
@@ -77,10 +85,24 @@ def upgrade() -> None:
         sa.Column("byte_size", sa.BigInteger(), nullable=False),
         sa.Column("status", doc_status, nullable=False),
         sa.Column("error", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["corpus_id"], ["corpora.id"], name="fk_documents_corpus_id_corpora", ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["org_id"], ["orgs.id"], name="fk_documents_org_id_orgs", ondelete="CASCADE"),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["corpus_id"], ["corpora.id"], name="fk_documents_corpus_id_corpora", ondelete="CASCADE"
+        ),
+        sa.ForeignKeyConstraint(
+            ["org_id"], ["orgs.id"], name="fk_documents_org_id_orgs", ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id", name="pk_documents"),
     )
     op.create_index(op.f("ix_documents_corpus_id"), "documents", ["corpus_id"])
@@ -96,11 +118,30 @@ def upgrade() -> None:
         sa.Column("ordinal", sa.Integer(), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("token_count", sa.Integer(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["document_id"], ["documents.id"], name="fk_chunks_document_id_documents", ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["corpus_id"], ["corpora.id"], name="fk_chunks_corpus_id_corpora", ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["org_id"], ["orgs.id"], name="fk_chunks_org_id_orgs", ondelete="CASCADE"),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["document_id"],
+            ["documents.id"],
+            name="fk_chunks_document_id_documents",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["corpus_id"], ["corpora.id"], name="fk_chunks_corpus_id_corpora", ondelete="CASCADE"
+        ),
+        sa.ForeignKeyConstraint(
+            ["org_id"], ["orgs.id"], name="fk_chunks_org_id_orgs", ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id", name="pk_chunks"),
         sa.UniqueConstraint("document_id", "ordinal", name="uq_chunks_document_id_ordinal"),
     )
@@ -129,11 +170,30 @@ def upgrade() -> None:
         sa.Column("corpus_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("title", sa.String(length=300), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["org_id"], ["orgs.id"], name="fk_conversations_org_id_orgs", ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["corpus_id"], ["corpora.id"], name="fk_conversations_corpus_id_corpora", ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name="fk_conversations_user_id_users", ondelete="SET NULL"),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["org_id"], ["orgs.id"], name="fk_conversations_org_id_orgs", ondelete="CASCADE"
+        ),
+        sa.ForeignKeyConstraint(
+            ["corpus_id"],
+            ["corpora.id"],
+            name="fk_conversations_corpus_id_corpora",
+            ondelete="SET NULL",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.id"], name="fk_conversations_user_id_users", ondelete="SET NULL"
+        ),
         sa.PrimaryKeyConstraint("id", name="pk_conversations"),
     )
     op.create_index(op.f("ix_conversations_org_id"), "conversations", ["org_id"])
@@ -149,10 +209,27 @@ def upgrade() -> None:
         sa.Column("citations", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("tool_calls", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("token_count", sa.Integer(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"], name="fk_messages_conversation_id_conversations", ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["org_id"], ["orgs.id"], name="fk_messages_org_id_orgs", ondelete="CASCADE"),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["conversation_id"],
+            ["conversations.id"],
+            name="fk_messages_conversation_id_conversations",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["org_id"], ["orgs.id"], name="fk_messages_org_id_orgs", ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id", name="pk_messages"),
     )
     op.create_index(op.f("ix_messages_conversation_id"), "messages", ["conversation_id"])
