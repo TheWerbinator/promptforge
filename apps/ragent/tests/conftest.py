@@ -89,18 +89,50 @@ async def _schema(pg_url: str) -> None:
     can't resolve the FK targets. The real tables come from api's migrations in
     every non-test environment.
     """
-    from sqlalchemy import Column, Table
+    from sqlalchemy import Column, String, Table
     from sqlalchemy.dialects.postgresql import UUID as PgUUID
 
     from promptforge_ragent.models import Base
 
-    for parent in ("orgs", "users"):
-        if parent not in Base.metadata.tables:
-            Table(parent, Base.metadata, Column("id", PgUUID(as_uuid=True), primary_key=True))
+    # `orgs`/`users` must be in the metadata so create_all can resolve ragent's
+    # FK targets. orgs carries slug/name because the demo-resolver looks it up by
+    # slug; users only needs its PK.
+    if "orgs" not in Base.metadata.tables:
+        Table(
+            "orgs",
+            Base.metadata,
+            Column("id", PgUUID(as_uuid=True), primary_key=True),
+            Column("slug", String),
+            Column("name", String),
+        )
+    if "users" not in Base.metadata.tables:
+        Table("users", Base.metadata, Column("id", PgUUID(as_uuid=True), primary_key=True))
 
     engine = create_async_engine(pg_url, future=True)
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        # Stubs of api-owned tables the resolver/seed read by raw SQL (subset of
+        # columns). Not in ragent's metadata (no ragent FK points at them); the
+        # real tables come from api's migrations everywhere else.
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS memberships ("
+                "  user_id UUID NOT NULL, org_id UUID NOT NULL)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS prompts ("
+                "  id UUID PRIMARY KEY, org_id UUID NOT NULL, name TEXT NOT NULL)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS prompt_versions ("
+                "  id UUID PRIMARY KEY, prompt_id UUID NOT NULL, version INTEGER NOT NULL, "
+                "  body TEXT NOT NULL)"
+            )
+        )
         # Stub of apps/api's `jobs` table (migration 0004) — just the columns
         # ragent's queue client touches. The real table is api-owned; ragent
         # shares it in every non-test environment.
@@ -167,8 +199,8 @@ async def committed_db(
         async with factory() as session:
             await session.execute(
                 text(
-                    "TRUNCATE jobs, chunks, documents, corpora, orgs, users "
-                    "RESTART IDENTITY CASCADE"
+                    "TRUNCATE jobs, chunks, documents, corpora, orgs, users, "
+                    "memberships, prompts, prompt_versions RESTART IDENTITY CASCADE"
                 )
             )
             await session.commit()
