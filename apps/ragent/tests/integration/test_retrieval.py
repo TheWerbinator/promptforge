@@ -24,7 +24,7 @@ _FAR_C = [0.0, 1.0] + [0.0] * 1534
 
 
 def _patch_query_embedding(monkeypatch: pytest.MonkeyPatch, vector: list[float]) -> None:
-    async def fake_embed(model: object, texts: list[str]) -> list[list[float]]:
+    async def fake_embed(model: object, texts: list[str], **kwargs: object) -> list[list[float]]:
         return [vector]
 
     monkeypatch.setattr(retrieval, "embed_texts", fake_embed)

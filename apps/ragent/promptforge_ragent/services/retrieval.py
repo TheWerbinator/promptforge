@@ -123,7 +123,7 @@ async def hybrid_search(
     if not query:
         return []
 
-    query_vector = (await embed_texts(corpus.embedding_model, [query]))[0]
+    query_vector = (await embed_texts(corpus.embedding_model, [query], is_query=True))[0]
     dense = await _dense_ranking(session, corpus, query_vector, limit=k_dense)
     sparse = await _sparse_ranking(session, corpus, query, limit=k_sparse)
 
