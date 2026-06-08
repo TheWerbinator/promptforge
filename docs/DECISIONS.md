@@ -593,3 +593,21 @@ The chat route (Phase 9) needs to stream the agent's progress over SSE — tool-
 ## Why fetch the system prompt with a minted service JWT, cache it, and fall back to a default?
 
 The live fetch is the platform-integration story — the agent's behavior is governed by a prompt managed in PromptForge — but it has to be both authenticated and robust. ragent authenticates by minting a short-lived access JWT with the *shared HS256 secret* for a configured service principal (the demo org/user), so apps/api validates it like any token with no extra round-trip — the same-secret, same-control rationale from the auth design. The result is TTL-cached so the agent isn't hitting apps/api on every message. And it falls back to a built-in `DEFAULT_SYSTEM_PROMPT` whenever the prompt isn't configured yet (the seed wires the id later) or the fetch fails — a managed-prompt feature must never be able to take the agent down, so a transient apps/api outage degrades to the default rather than erroring. Successful fetches (and the unconfigured default) are cached; a *failed* fetch is not, so the agent recovers on the next request once apps/api is back.
+
+# Phase 9 (ragent) — chat SSE
+
+## Why does the SSE generator own its DB session instead of taking the request one?
+
+A FastAPI dependency-yielded session is torn down when the endpoint function returns — but a streaming endpoint *returns the `EventSourceResponse` immediately* and the generator body runs afterward, as the response streams. So a request-scoped session would already be closed by the time the agent's tools query through it. The generator opens its own session via `get_session_factory()` and holds it for the life of the turn — exactly the pattern apps/api's eval stream uses (a raw engine), for the same reason.
+
+## Why persist the user message before the turn and the assistant message after?
+
+The user message is committed up front so the turn is durable the moment it starts — if the agent errors or the stream drops mid-flight, the question isn't lost and the conversation stays consistent. History for the turn is loaded *before* that insert so the model sees prior turns but not a duplicate of the message it's currently answering. The assistant message is written after the loop finishes, carrying the answer plus its citations and the tool-call trail, so reloading the conversation reconstructs both the answer and how the agent reached it (the source drawer + tool chips) without re-running anything.
+
+## Why only validate tokens in ragent (no issuance), and why is chat not behind a writer gate?
+
+ragent never logs anyone in — it only *consumes* access tokens apps/api already issued, so `core/security.py` is decode-only: there's no password hashing, no refresh rotation, no session machinery to duplicate. And chat isn't gated to writer roles the way apps/api's mutations are: the whole point of the demo is that a read-only demo visitor can ask the agent questions over the seeded corpora. Chat does write `Conversation`/`Message` rows, but those are the caller's own transient turn history, not tenant content — so any authenticated principal, demo included, may chat.
+
+## Why a BYOK header on chat, and what's still open?
+
+Each chat turn spends real tokens on the hosted key, so `X-Provider-Key` lets a caller supply their own provider key (passed straight through to the loop) — the same BYOK posture as apps/api's run route. What's *not* built yet is the demo cost cap: apps/api meters free hosted-key runs per IP, and ragent chat should get the equivalent before the demo is public, or a determined visitor could run up the hosted-key bill. Tracked as a pre-deploy follow-up rather than built now, to keep this phase to the chat surface itself.

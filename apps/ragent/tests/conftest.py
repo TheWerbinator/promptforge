@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import (
 from promptforge_ragent.core.config import get_settings
 
 if TYPE_CHECKING:
+    from httpx import AsyncClient
     from testcontainers.postgres import PostgresContainer
 
 # pgvector preinstalled; CREATE EXTENSION still required per-database.
@@ -172,3 +173,23 @@ async def committed_db(
             )
             await session.commit()
         await dispose_engine()
+
+
+@pytest_asyncio.fixture
+async def app_client(
+    committed_db: async_sessionmaker[AsyncSession],
+) -> AsyncIterator["AsyncClient"]:
+    """httpx client bound to the real ASGI app, sharing committed_db's env + engine.
+
+    The chat SSE generator opens its own session via the global factory (which
+    committed_db points at the container), so e2e tests hit the app and assert on
+    persisted rows via the same factory. The SSE response is finite, so
+    ASGITransport buffering it is fine.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    from promptforge_ragent.main import create_app
+
+    transport = ASGITransport(app=create_app())
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
