@@ -28,6 +28,7 @@ dependencies = [
     "pypdf>=4",
     "selectolax>=0.3",
     "rank-bm25>=0.2",
+    "sse-starlette>=2.1",
 ]
 
 [project.optional-dependencies]

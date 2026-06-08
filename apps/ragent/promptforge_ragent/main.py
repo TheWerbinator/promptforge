@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from promptforge_ragent import __version__
+from promptforge_ragent.api.v1 import api_router
 from promptforge_ragent.core.config import get_settings
 from promptforge_ragent.core.logging import RequestContextMiddleware, configure_logging
 
@@ -39,6 +40,8 @@ def create_app() -> FastAPI:
     # Added last → outermost: binds the request id before anything else runs and
     # guarantees X-Request-ID is set even on error responses.
     app.add_middleware(RequestContextMiddleware)
+
+    app.include_router(api_router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
