@@ -46,6 +46,10 @@ from promptforge_api.models import (
 DEMO_ORG_SLUG = "demo-corp"
 DEMO_ORG_NAME = "Demo Corp"
 
+# apps/ragent resolves its system prompt by this name in the demo org. Kept here
+# (apps/api owns prompts) so the agent consumes a platform-managed prompt.
+RAGENT_SYSTEM_PROMPT_NAME = "RAG Agent System Prompt"
+
 # Stable plaintext share tokens (public by design) so the README can link live
 # examples. Stored hashed like any other share token.
 DEMO_PROMPT_SHARE_TOKEN = "demo-prompt-support-reply"  # noqa: S105  # public share token, not a secret
@@ -82,6 +86,24 @@ _PROMPT_SPECS: list[tuple[str, str, list[tuple[str, list[dict[str, Any]]]]]] = [
         "Release Notes Writer",
         "Turns a commit log into customer-facing release notes.",
         [("Summarize these commits into concise release notes:\n\n{{commits}}", [_var("commits")])],
+    ),
+    # The RAG agent (apps/ragent) fetches this prompt by name at runtime as its
+    # system prompt — editing it here changes the agent's behavior on the next
+    # cache miss. No template variables: it's a system prompt, not a templated one.
+    (
+        RAGENT_SYSTEM_PROMPT_NAME,
+        "System prompt consumed by the PromptForge RAG agent (apps/ragent).",
+        [
+            (
+                "You are PromptForge's documentation assistant. Answer the user's question "
+                "using only the knowledge base, which you reach through your tools. Search "
+                "before you answer, fetch a full passage when a snippet is truncated, and "
+                "call cite_sources with the chunk_ids you relied on before giving your final "
+                "answer. If the answer isn't in the corpus, say so plainly instead of "
+                "guessing. Keep answers concise and grounded in the cited sources.",
+                [],
+            )
+        ],
     ),
 ]
 

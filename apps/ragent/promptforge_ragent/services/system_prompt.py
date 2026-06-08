@@ -1,15 +1,16 @@
-"""Fetch the agent's system prompt live from apps/api (cached, with a fallback).
+"""Resolve + fetch the agent's system prompt (cached, with a fallback).
 
 This is the platform-integration story: the agent's behavior is governed by a
-prompt *managed in PromptForge*, so editing it in the UI changes the agent on the
-next cache miss — not a redeploy. ragent authenticates the fetch by minting a
-short-lived JWT with the shared HS256 secret for a configured service principal
-(no round-trip to apps/api to validate — same-secret, same-control).
+prompt *managed in apps/api*. ragent discovers which prompt to use from the
+shared DB by natural key (the demo org + the configured prompt name), then
+fetches its body from apps/api over HTTP — authenticated by a short-lived JWT
+minted with the shared HS256 secret for the demo principal, so apps/api validates
+it like any token with no round-trip. Editing the prompt in PromptForge changes
+the agent on the next cache miss.
 
-If the prompt isn't configured yet (the seed wires `system_prompt_version_id` +
-the service principal) or the fetch fails, the agent falls back to a sane
-built-in prompt so it always works. Successful fetches and the unconfigured
-default are cached for `system_prompt_cache_seconds`; a *failed* fetch is not
+If the prompt isn't seeded yet or the fetch fails, the agent falls back to a
+built-in default so it always works. Resolved bodies (and the unconfigured
+default) are cached for `system_prompt_cache_seconds`; a *failed* fetch is not
 cached, so the agent recovers on the next request once apps/api is back.
 """
 
@@ -21,8 +22,14 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import structlog
 from jose import jwt
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from promptforge_ragent.core.config import Settings, get_settings
+from promptforge_ragent.core.config import get_settings
+from promptforge_ragent.services.platform import (
+    DemoPrincipal,
+    resolve_demo_principal,
+    resolve_prompt_version_id,
+)
 
 log = structlog.get_logger("promptforge.ragent.system_prompt")
 
@@ -43,20 +50,18 @@ DEFAULT_SYSTEM_PROMPT = (
 _cache: tuple[float, str] | None = None
 
 
-def _service_token(settings: Settings) -> str | None:
-    """Mint a short-lived access JWT for the service principal, or None if unset."""
-    if not (settings.service_org_id and settings.service_user_id):
-        return None
+def _service_token(principal: DemoPrincipal) -> str:
+    """Mint a short-lived access JWT for the demo principal (shared HS256 secret)."""
     now = datetime.now(UTC)
     payload = {
-        "sub": settings.service_user_id,
-        "org": settings.service_org_id,
+        "sub": str(principal.user_id),
+        "org": str(principal.org_id),
         "role": "member",
         "typ": "access",
         "iat": int(now.timestamp()),
         "exp": int((now + _SERVICE_TOKEN_TTL).timestamp()),
     }
-    return jwt.encode(payload, settings.jwt_secret.get_secret_value(), algorithm=_JWT_ALG)
+    return jwt.encode(payload, get_settings().jwt_secret.get_secret_value(), algorithm=_JWT_ALG)
 
 
 async def _fetch_version_body(base_url: str, version_id: str, token: str) -> str:
@@ -72,28 +77,35 @@ async def _fetch_version_body(base_url: str, version_id: str, token: str) -> str
     return body
 
 
-async def get_system_prompt() -> str:
-    """Return the agent system prompt — fetched from apps/api, cached, or default."""
+async def get_system_prompt(session: AsyncSession) -> str:
+    """Return the agent system prompt — resolved from apps/api, cached, or default."""
     global _cache
     settings = get_settings()
     now = time.monotonic()
     if _cache is not None and now - _cache[0] < settings.system_prompt_cache_seconds:
         return _cache[1]
 
-    version_id = settings.system_prompt_version_id
-    token = _service_token(settings)
-    if version_id and token:
-        try:
-            body = await _fetch_version_body(settings.api_base_url, version_id, token)
-        except Exception as exc:  # network, 4xx/5xx, malformed — fall back, don't cache
-            log.warning("system_prompt_fetch_failed", error=str(exc))
-            return DEFAULT_SYSTEM_PROMPT
-        _cache = (now, body)
-        return body
+    principal = await resolve_demo_principal(session, settings.demo_org_slug)
+    version_id = (
+        await resolve_prompt_version_id(session, principal.org_id, settings.system_prompt_name)
+        if principal is not None
+        else None
+    )
+    if principal is None or version_id is None:
+        # Not seeded yet — cache the default (it won't change until it's seeded).
+        _cache = (now, DEFAULT_SYSTEM_PROMPT)
+        return DEFAULT_SYSTEM_PROMPT
 
-    # Not configured yet: cache the default (it won't change until configured).
-    _cache = (now, DEFAULT_SYSTEM_PROMPT)
-    return DEFAULT_SYSTEM_PROMPT
+    try:
+        body = await _fetch_version_body(
+            settings.api_base_url, str(version_id), _service_token(principal)
+        )
+    except Exception as exc:  # network, 4xx/5xx, malformed — fall back, don't cache
+        log.warning("system_prompt_fetch_failed", error=str(exc))
+        return DEFAULT_SYSTEM_PROMPT
+
+    _cache = (now, body)
+    return body
 
 
 def _reset_cache() -> None:

@@ -134,7 +134,7 @@ async def _chat_events(
 
         yield _sse("conversation", {"conversation_id": str(conversation.id)})
 
-        system_prompt = await get_system_prompt()
+        system_prompt = await get_system_prompt(session)
         ctx = ToolContext(session=session, corpus=corpus)
         tool_trail: list[dict[str, Any]] = []
         answer: dict[str, Any] | None = None

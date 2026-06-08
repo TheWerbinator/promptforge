@@ -28,7 +28,7 @@ async def test_seed_demo_idempotent_and_populated(db_session: AsyncSession) -> N
     await _clean_demo(db_session)
 
     first = await seed_demo(db_session)
-    assert first == {"prompts": 3, "runs": 4, "eval_cases": 3, "eval_results": 3}
+    assert first == {"prompts": 4, "runs": 4, "eval_cases": 3, "eval_results": 3}
 
     # Running again changes nothing — get-or-create all the way down.
     second = await seed_demo(db_session)
