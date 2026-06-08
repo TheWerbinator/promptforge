@@ -611,3 +611,17 @@ ragent never logs anyone in — it only *consumes* access tokens apps/api alread
 ## Why a BYOK header on chat, and what's still open?
 
 Each chat turn spends real tokens on the hosted key, so `X-Provider-Key` lets a caller supply their own provider key (passed straight through to the loop) — the same BYOK posture as apps/api's run route. What's *not* built yet is the demo cost cap: apps/api meters free hosted-key runs per IP, and ragent chat should get the equivalent before the demo is public, or a determined visitor could run up the hosted-key bill. Tracked as a pre-deploy follow-up rather than built now, to keep this phase to the chat surface itself.
+
+# Phase 10 (ragent) — corpora API + upload
+
+## Why are corpus reads open to everyone but writes gated to writer roles?
+
+The demo's value is browsing and chatting the seeded corpora, so listing corpora and their documents is open to any authenticated principal — demo included. Creating a corpus and uploading a document are different: each upload triggers an ingest that calls the embedding API on the hosted key, so an unmetered demo upload path is a direct way to run up cost (and fill storage). Gating those to writer roles (`owner`/`member`, excluding `demo`) is the same read-only-demo posture apps/api takes on its mutations — demo consumes, real signups produce. The caps below bound cost for the users who *can* upload.
+
+## Why does upload return immediately with `pending` instead of ingesting inline?
+
+Parsing a PDF, chunking, and embedding every chunk takes seconds to tens of seconds — far too long to hold an HTTP request open, and it would couple the upload's success to the embedding provider being up. So upload does the cheap, durable part synchronously (validate, store the bytes, write a `pending` Document) and hands the slow part to the ingest worker via the queue, returning the document id + status right away. The client polls `GET /corpora/{id}/documents` (or watches status) for progress. This is exactly why `documents.raw_content` and `enqueue_ingest` were built in Phase 4 — the upload endpoint is just their HTTP entry point. A failed ingest later surfaces as `status=failed` + `error` on the row, not as a failed upload.
+
+## Why enforce both a per-file and a per-corpus byte cap?
+
+They guard different things. The per-file cap (5 MB) stops a single huge upload from blowing out memory (the whole file is read into a bytea) and producing a runaway number of chunks/embeddings in one shot. The per-corpus cap (50 MB, checked as `sum(existing byte_size) + new`) bounds the *cumulative* cost and storage a single corpus can accrue across many small uploads — without it, the per-file limit alone lets someone upload 4.9 MB a thousand times. Both return 413 with a message naming the limit. At portfolio scale these are generous; they exist so the demo has a hard ceiling, and they're config knobs (`max_file_bytes`/`max_corpus_bytes`) for real deployments.

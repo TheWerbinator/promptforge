@@ -29,6 +29,7 @@ dependencies = [
     "selectolax>=0.3",
     "rank-bm25>=0.2",
     "sse-starlette>=2.1",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     agent_model: str = "gpt-4o-mini"
     agent_max_iterations: int = 6
 
+    # Upload caps (user-uploaded corpora). Bound storage + ingest/embedding cost.
+    max_file_bytes: int = 5 * 1024 * 1024  # 5 MB/file
+    max_corpus_bytes: int = 50 * 1024 * 1024  # 50 MB/corpus
+
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     cors_origins: list[str] = Field(default_factory=list)
 
