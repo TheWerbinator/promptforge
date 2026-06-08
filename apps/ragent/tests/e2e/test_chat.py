@@ -107,7 +107,7 @@ async def test_chat_streams_and_persists(
 ) -> None:
     org_id, user_id, chunk_id = await _seed(committed_db)
 
-    async def fake_embed(model: object, texts: list[str]) -> list[list[float]]:
+    async def fake_embed(model: object, texts: list[str], **kwargs: object) -> list[list[float]]:
         return [_NEAR]
 
     monkeypatch.setattr(retrieval, "embed_texts", fake_embed)

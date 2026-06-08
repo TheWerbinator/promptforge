@@ -23,7 +23,7 @@ def _patch_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PF_JWT_SECRET", "a" * 48)
     get_settings.cache_clear()
 
-    async def fake_embed(model: object, texts: list[str]) -> list[list[float]]:
+    async def fake_embed(model: object, texts: list[str], **kwargs: object) -> list[list[float]]:
         return [_NEAR]
 
     monkeypatch.setattr(retrieval, "embed_texts", fake_embed)

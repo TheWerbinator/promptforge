@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     # shouldn't carry. Enable + install the extra + size up the machine to use it.
     rerank_enabled: bool = False
     rerank_model: str = "BAAI/bge-reranker-base"
+    # Local embedding model for corpora pinned to bge_small_en_v1_5 (the
+    # `local-embeddings` extra). 384-d. Seeded corpora use OpenAI, so this is only
+    # loaded when such a corpus is actually used.
+    embedding_bge_model: str = "BAAI/bge-small-en-v1.5"
 
     def async_database_url(self) -> str:
         """Return a SQLAlchemy DSN guaranteed to use the asyncpg driver.

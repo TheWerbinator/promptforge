@@ -33,9 +33,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Heavy, opt-in: the cross-encoder reranker. NOT installed by CI or the default
-# image — only when PF_RERANK_ENABLED=true on a machine sized for torch.
+# Heavy, opt-in (both pull sentence-transformers/torch). NOT installed by CI or
+# the default image. `rerank` → the cross-encoder (PF_RERANK_ENABLED). `local-
+# embeddings` → the bge-small backend, used only by corpora whose embedding_model
+# is bge_small_en_v1_5 (seeded corpora use OpenAI, so the default never needs it).
 rerank = ["sentence-transformers>=3"]
+local-embeddings = ["sentence-transformers>=3"]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",

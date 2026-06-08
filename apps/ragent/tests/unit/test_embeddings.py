@@ -54,6 +54,61 @@ async def test_provider_error_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
         await embed_texts(EmbeddingModel.OPENAI_3_SMALL, ["a"])
 
 
-async def test_bge_path_is_phase12_seam() -> None:
-    with pytest.raises(EmbeddingError, match="phase 12"):
+class _FakeBge:
+    """Stands in for SentenceTransformer — no torch."""
+
+    def __init__(self) -> None:
+        self.last_inputs: list[str] | None = None
+        self.last_normalize: bool | None = None
+
+    def encode(self, inputs: list[str], normalize_embeddings: bool) -> list[list[float]]:
+        self.last_inputs = list(inputs)
+        self.last_normalize = normalize_embeddings
+        return [[0.02] * 384 for _ in inputs]
+
+
+def _patch_bge(monkeypatch: pytest.MonkeyPatch) -> _FakeBge:
+    fake = _FakeBge()
+    monkeypatch.setattr(embeddings, "_get_bge_model", lambda name: fake)
+    return fake
+
+
+async def test_bge_passages_have_no_instruction(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _patch_bge(monkeypatch)
+    out = await embed_texts(EmbeddingModel.BGE_SMALL_EN, ["alpha", "beta"])
+    assert len(out) == 2
+    assert all(len(v) == 384 for v in out)
+    assert fake.last_inputs == ["alpha", "beta"]  # no query instruction on passages
+    assert fake.last_normalize is True
+
+
+async def test_bge_query_prepends_instruction(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _patch_bge(monkeypatch)
+    await embed_texts(EmbeddingModel.BGE_SMALL_EN, ["what is x"], is_query=True)
+    assert fake.last_inputs is not None
+    assert fake.last_inputs[0].startswith("Represent this sentence for searching")
+    assert fake.last_inputs[0].endswith("what is x")
+
+
+async def test_bge_dimension_mismatch_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    class WrongDim(_FakeBge):
+        def encode(self, inputs: list[str], normalize_embeddings: bool) -> list[list[float]]:
+            return [[0.0] * 1536 for _ in inputs]
+
+    monkeypatch.setattr(embeddings, "_get_bge_model", lambda name: WrongDim())
+    with pytest.raises(EmbeddingError, match="384-d"):
         await embed_texts(EmbeddingModel.BGE_SMALL_EN, ["a"])
+
+
+async def test_openai_ignores_is_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_aembedding(**kwargs: object) -> SimpleNamespace:
+        captured["input"] = kwargs["input"]
+        texts = kwargs["input"]
+        assert isinstance(texts, list)
+        return _fake_response([[0.1] * 1536 for _ in texts])
+
+    monkeypatch.setattr(embeddings.litellm, "aembedding", fake_aembedding)
+    await embed_texts(EmbeddingModel.OPENAI_3_SMALL, ["q"], is_query=True)
+    assert captured["input"] == ["q"]  # no instruction injected on the OpenAI path
