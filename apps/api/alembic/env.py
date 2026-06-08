@@ -45,9 +45,7 @@ def _include_object(
     Ignoring any table not in our own metadata makes api a safe co-migrator of
     the shared DB. (Affects autogenerate only; applying migrations is unaffected.)
     """
-    if type_ == "table" and name not in target_metadata.tables:
-        return False
-    return True
+    return not (type_ == "table" and name not in target_metadata.tables)
 
 
 def run_migrations_offline() -> None:
