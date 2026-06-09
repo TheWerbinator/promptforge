@@ -52,14 +52,18 @@ kill_timeout = '30s'
     path = '/health'
     protocol = 'http'
 
+# 1 GB, not 512 MB: litellm alone is ~200 MB RSS, and both processes load it (the
+# web/chat agent + the worker's embed-on-ingest), plus documents/vectors in flight.
+# 512 MB OOM-killed the seed (which also loads litellm) when it ran alongside the
+# worker. Both auto-scale to 0 when idle, so the larger size only costs when active.
 [[vm]]
   cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 512
+  memory_mb = 1024
   processes = ['web']
 
 [[vm]]
   cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 512
+  memory_mb = 1024
   processes = ['ingest-worker']

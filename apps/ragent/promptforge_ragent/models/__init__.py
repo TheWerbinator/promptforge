@@ -6,6 +6,7 @@ metadata is used for runtime ORM queries and to build the schema in integration
 tests (where the api-owned parent tables are stubbed). See docs/DECISIONS.md.
 """
 
+from promptforge_ragent.models import _external  # noqa: F401 — registers orgs/users on metadata
 from promptforge_ragent.models.base import Base
 from promptforge_ragent.models.chunk import Chunk
 from promptforge_ragent.models.conversation import Conversation

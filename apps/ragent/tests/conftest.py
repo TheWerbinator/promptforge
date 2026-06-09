@@ -89,24 +89,10 @@ async def _schema(pg_url: str) -> None:
     can't resolve the FK targets. The real tables come from api's migrations in
     every non-test environment.
     """
-    from sqlalchemy import Column, String, Table
-    from sqlalchemy.dialects.postgresql import UUID as PgUUID
-
+    # `orgs`/`users` are declared on Base.metadata by promptforge_ragent.models
+    # (models/_external.py) — importing Base registers them — so create_all builds
+    # them and ragent's FK targets resolve, the same as in production.
     from promptforge_ragent.models import Base
-
-    # `orgs`/`users` must be in the metadata so create_all can resolve ragent's
-    # FK targets. orgs carries slug/name because the demo-resolver looks it up by
-    # slug; users only needs its PK.
-    if "orgs" not in Base.metadata.tables:
-        Table(
-            "orgs",
-            Base.metadata,
-            Column("id", PgUUID(as_uuid=True), primary_key=True),
-            Column("slug", String),
-            Column("name", String),
-        )
-    if "users" not in Base.metadata.tables:
-        Table("users", Base.metadata, Column("id", PgUUID(as_uuid=True), primary_key=True))
 
     engine = create_async_engine(pg_url, future=True)
     async with engine.begin() as conn:
