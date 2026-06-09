@@ -146,7 +146,9 @@ export async function apiFetch<T>(
   const send = (accessToken: string): Promise<Response> => {
     const headers = new Headers(init.headers);
     headers.set("authorization", `Bearer ${accessToken}`);
-    if (init.body) headers.set("content-type", "application/json");
+    // Default to JSON only if the caller didn't set a content-type (multipart
+    // uploads pass their own with the boundary).
+    if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json");
     return fetch(`${base}${path}`, { ...init, headers, cache: "no-store" });
   };
 

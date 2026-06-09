@@ -20,6 +20,7 @@ export const config = {
     "/dashboard/:path*",
     "/prompts/:path*",
     "/evals/:path*",
+    "/corpora/:path*",
     "/chat/:path*",
     "/settings/:path*",
   ],
