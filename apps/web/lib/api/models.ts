@@ -45,3 +45,38 @@ export interface BatchProgressEvent {
   completed: number;
   total: number;
 }
+
+// ----- ragent (separate service; hand-typed — no web schema-gen for ragent yet) -----
+
+export interface Corpus {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  embedding_model: string;
+  document_count: number;
+}
+
+export interface RagentDocument {
+  id: string;
+  title: string;
+  content_type: string;
+  status: string;
+  byte_size: number;
+  error: string | null;
+}
+
+/** A source the agent cited (from the cite_sources tool). Rendered loosely. */
+export interface Citation {
+  chunk_id?: string;
+  document_title?: string;
+  ordinal?: number;
+  snippet?: string;
+  [key: string]: unknown;
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  citations?: Citation[];
+}

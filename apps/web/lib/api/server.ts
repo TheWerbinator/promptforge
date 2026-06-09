@@ -135,7 +135,11 @@ export async function apiLogout(session: Session): Promise<void> {
  * context. Later data-fetching phases proxy through handlers or refresh in
  * middleware.
  */
-export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<ApiResult<T>> {
+export async function apiFetch<T>(
+  path: string,
+  init: RequestInit = {},
+  base: string = API_URL,
+): Promise<ApiResult<T>> {
   const session = await readSession();
   if (!session) return { ok: false, status: 401, data: null, error: "not authenticated" };
 
@@ -143,7 +147,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     const headers = new Headers(init.headers);
     headers.set("authorization", `Bearer ${accessToken}`);
     if (init.body) headers.set("content-type", "application/json");
-    return fetch(`${API_URL}${path}`, { ...init, headers, cache: "no-store" });
+    return fetch(`${base}${path}`, { ...init, headers, cache: "no-store" });
   };
 
   let res = await send(session.accessToken);
@@ -167,15 +171,27 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
  * token, refreshing once on a 401. Returns the raw upstream Response so a route
  * handler can pipe `.body` straight to the browser. Use from a route handler.
  */
-export async function apiStream(path: string): Promise<Response> {
+export async function apiStream(
+  path: string,
+  opts: { base?: string; method?: string; body?: string } = {},
+): Promise<Response> {
+  const base = opts.base ?? API_URL;
   const session = await readSession();
   if (!session) return new Response("not authenticated", { status: 401 });
 
-  const open = (accessToken: string): Promise<Response> =>
-    fetch(`${API_URL}${path}`, {
-      headers: { authorization: `Bearer ${accessToken}`, accept: "text/event-stream" },
+  const open = (accessToken: string): Promise<Response> => {
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${accessToken}`,
+      accept: "text/event-stream",
+    };
+    if (opts.body) headers["content-type"] = "application/json";
+    return fetch(`${base}${path}`, {
+      method: opts.method ?? "GET",
+      headers,
+      body: opts.body,
       cache: "no-store",
     });
+  };
 
   let res = await open(session.accessToken);
   if (res.status === 401) {

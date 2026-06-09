@@ -16,5 +16,11 @@ export function proxy(req: NextRequest): NextResponse {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/prompts/:path*", "/evals/:path*", "/settings/:path*"],
+  matcher: [
+    "/dashboard/:path*",
+    "/prompts/:path*",
+    "/evals/:path*",
+    "/chat/:path*",
+    "/settings/:path*",
+  ],
 };
