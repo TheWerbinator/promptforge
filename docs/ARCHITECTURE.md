@@ -61,7 +61,7 @@ Two processes share a single Docker image: `api` (uvicorn) and `worker` (queue c
 
 **Routes (pending):** none for apps/api MVP — remaining work is seed (15), deploy/observability (16), README polish (17).
 
-### apps/ragent — RAG + agent service *(in active development — 13/14)*
+### apps/ragent — RAG + agent service *(feature-complete — 14/14; deploy Shawn-gated)*
 
 Four corpora (3 seeded + user-uploadable). Per-corpus embedding model (OpenAI `text-embedding-3-small` 1536d or local `bge-small-en-v1.5` 384d). Hybrid retrieval (pgvector cosine + BM25 + RRF). Optional cross-encoder rerank. ReAct loop w/ 3 tools (`search_docs`, `fetch_passage`, `cite_sources`). Streams chat via SSE. Fetches system prompt from apps/api at runtime — real platform integration.
 

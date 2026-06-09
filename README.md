@@ -3,7 +3,8 @@
 **Multi-tenant LLM prompt-management and evaluation platform** — versioned prompts, batch evals with four judge types, live result streaming, and a RAG-agent sample app that consumes the platform's own prompts at runtime.
 
 [![api](https://github.com/TheWerbinator/promptforge/actions/workflows/api.yml/badge.svg)](https://github.com/TheWerbinator/promptforge/actions/workflows/api.yml)
-&nbsp;Python 3.11–3.12 · FastAPI · Postgres 17 + pgvector · mypy --strict · 222 tests · ~85% coverage
+[![ragent](https://github.com/TheWerbinator/promptforge/actions/workflows/ragent.yml/badge.svg)](https://github.com/TheWerbinator/promptforge/actions/workflows/ragent.yml)
+&nbsp;Python 3.11–3.12 · FastAPI · Postgres 17 + pgvector · mypy --strict · 300+ tests · ~85% coverage
 
 **New here?** [docs/GUIDE.md](docs/GUIDE.md) explains what PromptForge does, the workflow, and what you provide to get value out of it.
 
@@ -32,6 +33,7 @@ made deliberately and written down:
 - **One database, fewer moving parts** — the job queue is `SELECT … FOR UPDATE SKIP LOCKED`; pub/sub for the live stream is `LISTEN/NOTIFY`; vectors are pgvector. No Redis, no separate broker, no separate vector DB — each documented with the scale at which I'd change it.
 - **A demo mode designed like a product** — instant read-only access to seeded data, a per-IP free-run quota on the hosted key (then BYOK), rate-limited login, and revocable public share links.
 - **Operability** — structured JSON logs with a request id on every line and the `X-Request-ID` response header, idempotent demo seeding wired into the deploy release step, zero-downtime migrations, and CI that gates lint + `mypy --strict` + the full test suite + coverage before it deploys.
+- **A RAG agent that consumes the platform** (`apps/ragent`) — hybrid retrieval (pgvector + BM25 + RRF), a ReAct loop with citations and safety rails, and its system prompt **fetched live from the API** so a managed prompt drives the agent. Shares the platform's Postgres + `SKIP LOCKED` queue; demo turns are bounded by per-IP **and global** daily caps. See [apps/ragent/README.md](apps/ragent/README.md).
 
 The reasoning behind each of these (and ~35 more decisions, with the alternatives
 I rejected and when I'd revisit) lives in **[docs/DECISIONS.md](docs/DECISIONS.md)** — it's the most useful file in the repo.
@@ -67,9 +69,9 @@ Full diagram and component breakdown: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE
 ```
 apps/
 ├── api/      FastAPI backend — auth, prompts, versions, runs, evals, queue, demo, shares
-├── web/      Next.js 15 frontend — App Router, shadcn/ui, dark by default   (in progress)
-└── ragent/   RAG-agent service — 4 corpora, hybrid retrieval, ReAct loop    (in progress)
-docs/         ARCHITECTURE · DECISIONS · DEPLOY
+├── web/      Next.js 16 frontend — App Router, BFF auth, dark by default    (in progress)
+└── ragent/   RAG-agent service — hybrid retrieval, ReAct loop, SSE chat     (feature-complete)
+docs/         ARCHITECTURE · DECISIONS · DEPLOY · DEPLOY-RAGENT
 infra/        docker compose for the full local stack
 ```
 
@@ -99,8 +101,8 @@ uv run pytest --cov          # full suite needs Docker (testcontainers Postgres)
 ## Status
 
 - **apps/api** — feature-complete and deployed. Auth, multi-tenancy, prompts + versioning, runs, the eval engine + SSE, demo mode, public shares, seed, CI/CD.
-- **apps/web** — Next.js 15 frontend, in progress.
-- **apps/ragent** — RAG-agent (hybrid retrieval + ReAct), in progress.
+- **apps/ragent** — feature-complete (hybrid retrieval, ReAct agent + citations, SSE chat, live system-prompt fetch, async ingestion, demo cost caps). CI runs the full suite; `fly deploy` + prod smoke pending.
+- **apps/web** — Next.js 16 frontend, in progress (auth, prompts, evals + live SSE, dashboard done; ragent chat UI next).
 
 ## License
 
