@@ -175,7 +175,7 @@ export async function apiFetch<T>(
  */
 export async function apiStream(
   path: string,
-  opts: { base?: string; method?: string; body?: string } = {},
+  opts: { base?: string; method?: string; body?: string; headers?: Record<string, string> } = {},
 ): Promise<Response> {
   const base = opts.base ?? API_URL;
   const session = await readSession();
@@ -183,6 +183,7 @@ export async function apiStream(
 
   const open = (accessToken: string): Promise<Response> => {
     const headers: Record<string, string> = {
+      ...opts.headers,
       authorization: `Bearer ${accessToken}`,
       accept: "text/event-stream",
     };
