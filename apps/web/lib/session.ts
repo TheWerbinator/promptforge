@@ -1,8 +1,8 @@
 import "server-only";
 
-import { EncryptJWT, jwtDecrypt } from "jose";
 import { cookies } from "next/headers";
 
+import { seal, unseal } from "./seal";
 import type { SessionProfile } from "./types";
 
 export type { SessionProfile };
@@ -23,30 +23,13 @@ export interface Session extends SessionProfile {
   refreshToken: string;
 }
 
-async function key(): Promise<Uint8Array> {
-  const secret = process.env.WEB_SESSION_SECRET;
-  if (!secret) throw new Error("WEB_SESSION_SECRET is not set");
-  // Hash to a fixed 32-byte key so any-length secret works (and it's edge-safe).
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
-  return new Uint8Array(digest);
-}
-
 export async function sealSession(session: Session): Promise<string> {
-  return new EncryptJWT({ ...session })
-    .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
-    .setIssuedAt()
-    .encrypt(await key());
+  return seal({ ...session });
 }
 
 export async function readSession(): Promise<Session | null> {
   const raw = (await cookies()).get(COOKIE)?.value;
-  if (!raw) return null;
-  try {
-    const { payload } = await jwtDecrypt(raw, await key());
-    return payload as unknown as Session;
-  } catch {
-    return null; // tampered / expired key / malformed — treat as logged out
-  }
+  return unseal<Session>(raw); // tampered / expired key / malformed → null (logged out)
 }
 
 export async function writeSession(session: Session): Promise<void> {

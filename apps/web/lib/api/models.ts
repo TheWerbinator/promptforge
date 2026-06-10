@@ -35,6 +35,9 @@ export interface RunList {
 
 export const JUDGE_KINDS: JudgeKind[] = ["exact", "contains", "regex", "llm_judge"];
 
+export type ApiKeyListItem = components["schemas"]["ApiKeyListItem"];
+export type ApiKeyCreated = components["schemas"]["ApiKeyCreateResponse"];
+
 /** Shape of the small JSON payload in each SSE `result` event (see eval_runner). */
 export interface BatchProgressEvent {
   kind: string;
