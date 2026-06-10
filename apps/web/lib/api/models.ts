@@ -38,6 +38,10 @@ export const JUDGE_KINDS: JudgeKind[] = ["exact", "contains", "regex", "llm_judg
 export type ApiKeyListItem = components["schemas"]["ApiKeyListItem"];
 export type ApiKeyCreated = components["schemas"]["ApiKeyCreateResponse"];
 
+export type PublicShare = components["schemas"]["PublicShareResponse"];
+export type PublicPromptShare = components["schemas"]["PublicPromptShare"];
+export type PublicEvalBatchShare = components["schemas"]["PublicEvalBatchShare"];
+
 /** Shape of the small JSON payload in each SSE `result` event (see eval_runner). */
 export interface BatchProgressEvent {
   kind: string;

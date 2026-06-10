@@ -689,3 +689,17 @@ The session cookie is rewritten on every token refresh (rotated refresh token �
 ## Why is demo read-only for API keys but still allowed to set a BYOK key?
 
 Issuing an API key is a *write* to the workspace (a durable credential against the shared demo org) — so it's gated to writer roles like every other demo mutation, and the UI disables the create form for the demo role (the API returns 403 regardless, defense in depth). Setting a BYOK key is the opposite: it writes nothing to the platform, it only stores the visitor's own credential in their own browser-origin cookie so their chat turns bill to *their* key. That's exactly the intended demo escape hatch — burn the free hosted turns, then paste your own key and keep going — so it stays open to demo. The two operations look similar ("save a key") but sit on opposite sides of the read-only boundary because one spends our resources and the other spends the visitor's.
+
+# Phase 12 (web) — Public share view
+
+## Why fetch the share directly server-side instead of going through the BFF proxy?
+
+Every other data call in the web app routes through the BFF because it needs the session's access token attached (and refreshed). The public share endpoint is the deliberate exception in the API — the *only* unauthenticated read — so there's no token to attach and nothing for the BFF to do. The share page is a server component that fetches `GET /api/v1/public/share/{token}` straight from the API and renders the result; no proxy route, no client fetch, no session. That also keeps it outside the `(app)` group and off the proxy.ts matcher, so a logged-out visitor reaches it with no redirect to login — which is the whole point of a public link.
+
+## Why render it as a server component with no client JS (and a `<pre>`, not Monaco)?
+
+This is the one page a cold visitor lands on from a forwarded link, so first paint and "looks like a real product" matter more here than anywhere else. A read-only view has no interactivity to hydrate — there's nothing to click, edit, or stream — so it's a pure server render: the HTML arrives complete, nothing ships to the browser, and it's the lightest possible page for Lighthouse. The prompt body uses a `<pre>` block rather than the Monaco editor the authoring pages use: Monaco is a client-only, multi-hundred-KB editor justified when you're *editing*, but for displaying a prompt body it would be a heavy hydration cost for zero benefit. Same reasoning as lazy-loading Monaco only on the create/version pages.
+
+## Why `cache: "no-store"` on the share fetch?
+
+A share link is a revocable, optionally-expiring capability. If the page (or Next's data cache) held a copy, a link the owner just revoked would keep resolving from cache — exactly the security property the revoke button is supposed to give. `no-store` means every visit re-asks the API, which re-checks revoked/expired before returning anything. The content is small and the traffic is low (it's a shared link, not a hot path), so there's no real cost to skipping the cache, and correctness on revocation is worth more than a cache hit.
