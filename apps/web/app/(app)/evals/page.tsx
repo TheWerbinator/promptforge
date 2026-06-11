@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { SkeletonRows } from "@/components/ui/skeleton";
 import { api } from "@/lib/api/client";
 import type { EvalSuite } from "@/lib/api/models";
 
@@ -35,7 +36,7 @@ export default function EvalsPage() {
       </div>
 
       {error && <p className="text-sm text-red-400">{error}</p>}
-      {suites === null && !error && <p className="text-sm text-neutral-500">Loading…</p>}
+      {suites === null && !error && <SkeletonRows />}
       {suites && suites.length === 0 && (
         <p className="text-sm text-neutral-500">No eval suites yet. Create one to start testing prompts.</p>
       )}

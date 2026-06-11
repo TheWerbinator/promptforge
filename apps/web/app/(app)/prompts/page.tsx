@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { SkeletonRows } from "@/components/ui/skeleton";
 import { api } from "@/lib/api/client";
 import type { PromptList } from "@/lib/api/models";
 
@@ -36,7 +37,7 @@ export default function PromptsPage() {
         </Link>
       </div>
 
-      {loading && <p className="text-sm text-neutral-500">Loading…</p>}
+      {loading && <SkeletonRows />}
       {error && <p className="text-sm text-red-400">{error}</p>}
       {data && data.items.length === 0 && (
         <p className="text-sm text-neutral-500">No prompts yet. Create your first one.</p>

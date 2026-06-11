@@ -3,14 +3,19 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api/client";
 import type { EvalSuite, PromptList, Run, RunList } from "@/lib/api/models";
 
-function Tile({ label, value }: { label: string; value: number | string }) {
+function Tile({ label, value }: { label: string; value: number | string | null }) {
   return (
     <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-4">
       <div className="text-sm text-neutral-400">{label}</div>
-      <div className="mt-2 text-2xl font-semibold">{value}</div>
+      {value === null ? (
+        <Skeleton className="mt-2 h-8 w-12" />
+      ) : (
+        <div className="mt-2 text-2xl font-semibold">{value}</div>
+      )}
     </div>
   );
 }
@@ -42,16 +47,14 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const fmt = (n: number | null) => (n === null ? "…" : n);
-
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-xl font-semibold">Dashboard</h1>
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <Tile label="Prompts" value={fmt(prompts)} />
-        <Tile label="Eval suites" value={fmt(suites)} />
-        <Tile label="Runs" value={runs ? runs.total : "…"} />
+        <Tile label="Prompts" value={prompts} />
+        <Tile label="Eval suites" value={suites} />
+        <Tile label="Runs" value={runs ? runs.total : null} />
       </div>
 
       <section className="flex flex-col gap-2">
@@ -73,6 +76,16 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-800">
+              {runs === null &&
+                Array.from({ length: 3 }).map((_, i) => (
+                  <tr key={`sk-${i}`}>
+                    {Array.from({ length: 5 }).map((__, j) => (
+                      <td key={j} className="px-4 py-2.5">
+                        <Skeleton className="h-4 w-16" />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
               {runs?.items.map((run) => (
                 <tr key={run.id}>
                   <td className="px-4 py-2 font-mono text-xs">{run.model}</td>

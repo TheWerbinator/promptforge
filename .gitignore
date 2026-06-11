@@ -132,6 +132,9 @@ celerybeat.pid
 
 # Environments
 .env*
+# Keep the example env files tracked (placeholders only, no secrets) — they're
+# onboarding docs. Real .env / .env.local stay ignored by the rule above.
+!.env.example
 .venv
 env/
 venv/

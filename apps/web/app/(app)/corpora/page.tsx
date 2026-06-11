@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { SkeletonRows } from "@/components/ui/skeleton";
 import { ragent } from "@/lib/api/client";
 import type { Corpus } from "@/lib/api/models";
 
@@ -35,7 +36,7 @@ export default function CorporaPage() {
       </div>
 
       {error && <p className="text-sm text-red-400">{error}</p>}
-      {corpora === null && !error && <p className="text-sm text-neutral-500">Loading…</p>}
+      {corpora === null && !error && <SkeletonRows />}
       {corpora && corpora.length === 0 && (
         <p className="text-sm text-neutral-500">No corpora yet. Create one and upload documents.</p>
       )}
