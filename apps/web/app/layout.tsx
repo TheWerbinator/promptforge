@@ -4,6 +4,7 @@ import "./globals.css";
 
 import { AuthProvider } from "@/lib/auth-context";
 import { readSession, toProfile } from "@/lib/session";
+import { SITE } from "@/lib/site";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -16,9 +17,16 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PromptForge",
-  description:
-    "Multi-tenant LLM prompt management and evaluation platform — versioned prompts, batch evals, live result streaming.",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://promptforge.vercel.app"),
+  title: { default: SITE.name, template: `%s · ${SITE.name}` },
+  description: SITE.description,
+  openGraph: {
+    title: SITE.name,
+    description: SITE.description,
+    type: "website",
+    siteName: SITE.name,
+  },
+  twitter: { card: "summary_large_image", title: SITE.name, description: SITE.description },
 };
 
 export default async function RootLayout({

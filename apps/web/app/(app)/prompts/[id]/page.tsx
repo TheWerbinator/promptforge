@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { CodeEditor } from "@/components/code-editor";
 import { btnCls } from "@/components/form";
 import { VariablesEditor } from "@/components/prompts/variables-editor";
+import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api/client";
 import type { PromptDetail, PromptVar, PromptVersion } from "@/lib/api/models";
 
@@ -74,7 +75,15 @@ export default function PromptDetailPage() {
     }
   };
 
-  if (loading) return <p className="text-sm text-neutral-500">Loading…</p>;
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-4">
+        <Skeleton className="h-7 w-64" />
+        <Skeleton className="h-4 w-40" />
+        <Skeleton className="h-48 w-full" />
+      </div>
+    );
+  }
   if (!prompt) return <p className="text-sm text-red-400">{error ?? "Not found"}</p>;
 
   const latest = prompt.latest_version;

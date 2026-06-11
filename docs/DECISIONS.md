@@ -717,3 +717,9 @@ MSW's Node interceptor has to be installed in the same process that issues the `
 ## Why presence-based assertions, an accumulating mock store, and a single worker?
 
 The mock keeps a small in-memory store so a create→list→detail→delete flow is internally coherent within a run, but it never resets between specs. Rather than build a reset endpoint and risk order-dependent tests, the specs assert on what they *did* (the prompt they just created appears; the batch they ran streams a result) rather than on exact global counts — so leftover state from a prior spec can't fail a later one. Playwright runs single-worker (`workers: 1`) because there's one shared Next server with one shared MSW store; parallel workers would interleave writes to it. At six specs the serial cost is a few seconds — not worth the complexity of per-worker isolation. SSE responses are returned as a real `text/event-stream` `ReadableStream`, so the same client parsing path that runs in production (fetch + `eventsource-parser`) is exercised, just fed canned events.
+
+# Phase 14 (web) — Visual polish
+
+## Why skeletons over spinners, and why keep the landing a static server component?
+
+Two small choices with a defendable reason. Skeletons (placeholder blocks shaped like the content) instead of a centered "Loading…"/spinner because they preserve layout — no content-shift when data lands — and read as a finished product rather than a prototype; the cost is one ~10-line component reused everywhere a client page fetches. The landing is a pure server component with no client data fetching and a CSS-only backdrop, so it **prerenders to static HTML** at build — the fastest possible first paint for the page a hiring team hits first (the acceptance bar was Lighthouse ≥85), and there's nothing dynamic on it to justify client JS. The interactive `Try the demo` button is the one island (`'use client'`), which is exactly the App Router pattern: static shell, minimal client islands.
