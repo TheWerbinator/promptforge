@@ -4,7 +4,8 @@
 
 [![api](https://github.com/TheWerbinator/promptforge/actions/workflows/api.yml/badge.svg)](https://github.com/TheWerbinator/promptforge/actions/workflows/api.yml)
 [![ragent](https://github.com/TheWerbinator/promptforge/actions/workflows/ragent.yml/badge.svg)](https://github.com/TheWerbinator/promptforge/actions/workflows/ragent.yml)
-&nbsp;Python 3.11–3.12 · FastAPI · Postgres 17 + pgvector · mypy --strict · 300+ tests · ~85% coverage
+[![web](https://github.com/TheWerbinator/promptforge/actions/workflows/web.yml/badge.svg)](https://github.com/TheWerbinator/promptforge/actions/workflows/web.yml)
+&nbsp;Python 3.11–3.12 · FastAPI · Next.js 16 · Postgres 17 + pgvector · mypy --strict · 300+ tests · ~85% coverage
 
 **New here?** [docs/GUIDE.md](docs/GUIDE.md) explains what PromptForge does, the workflow, and what you provide to get value out of it.
 
@@ -12,15 +13,15 @@
 
 ## Try it without signing up
 
-The API is live, with a seeded demo workspace:
+Everything's live, with a seeded demo workspace:
 
+- **Web app — start here:** https://thewerbinator-promptforge.vercel.app → click **Try the demo** for instant read-only access (prompts, eval reports, and the RAG-agent chat), no signup.
 - **API + interactive docs:** https://promptforge-api.fly.dev/docs
 - **A shared prompt (public link, no auth):** https://promptforge-api.fly.dev/api/v1/public/share/demo-prompt-support-reply
 - **A shared eval report (public link, no auth):** https://promptforge-api.fly.dev/api/v1/public/share/demo-eval-support-quality
-- **Instant demo session:** `POST https://promptforge-api.fly.dev/api/v1/demo/login` → a read-only token for the demo org, plus a few free real LLM runs before you bring your own key.
 
-> These return JSON today (the API is the finished piece). The Next.js web UI that
-> renders them is in progress — see **Status** below.
+> The backends auto-stop when idle, so the first request after a while may
+> cold-start (~45 s) before the demo is responsive.
 
 ## What this demonstrates
 
@@ -34,6 +35,7 @@ made deliberately and written down:
 - **A demo mode designed like a product** — instant read-only access to seeded data, a per-IP free-run quota on the hosted key (then BYOK), rate-limited login, and revocable public share links.
 - **Operability** — structured JSON logs with a request id on every line and the `X-Request-ID` response header, idempotent demo seeding wired into the deploy release step, zero-downtime migrations, and CI that gates lint + `mypy --strict` + the full test suite + coverage before it deploys.
 - **A RAG agent that consumes the platform** (`apps/ragent`) — hybrid retrieval (pgvector + BM25 + RRF), a ReAct loop with citations and safety rails, and its system prompt **fetched live from the API** so a managed prompt drives the agent. Shares the platform's Postgres + `SKIP LOCKED` queue; demo turns are bounded by per-IP **and global** daily caps. See [apps/ragent/README.md](apps/ragent/README.md).
+- **A frontend with a real BFF** (`apps/web`) — the browser only talks to the Next origin; route handlers proxy to *both* backends and the session is a **JWE-sealed httpOnly cookie**, so no API token ever reaches the browser. Eval batches and agent chat stream as real SSE through the proxy; the public share pages are static server components. Tested end-to-end with **Playwright + in-process MSW** — the real BFF runs against a faked upstream, no live backend. See [apps/web/README.md](apps/web/README.md).
 
 The reasoning behind each of these (and ~35 more decisions, with the alternatives
 I rejected and when I'd revisit) lives in **[docs/DECISIONS.md](docs/DECISIONS.md)** — it's the most useful file in the repo.
@@ -69,9 +71,9 @@ Full diagram and component breakdown: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE
 ```
 apps/
 ├── api/      FastAPI backend — auth, prompts, versions, runs, evals, queue, demo, shares
-├── web/      Next.js 16 frontend — App Router, BFF auth, dark by default    (in progress)
-└── ragent/   RAG-agent service — hybrid retrieval, ReAct loop, SSE chat     (feature-complete)
-docs/         ARCHITECTURE · DECISIONS · DEPLOY · DEPLOY-RAGENT
+├── web/      Next.js 16 frontend — App Router, BFF auth, SSE, dark by default  (deployed)
+└── ragent/   RAG-agent service — hybrid retrieval, ReAct loop, SSE chat        (deployed)
+docs/         ARCHITECTURE · DECISIONS · DEPLOY · DEPLOY-RAGENT · DEPLOY-WEB
 infra/        docker compose for the full local stack
 ```
 
@@ -101,8 +103,8 @@ uv run pytest --cov          # full suite needs Docker (testcontainers Postgres)
 ## Status
 
 - **apps/api** — feature-complete and deployed. Auth, multi-tenancy, prompts + versioning, runs, the eval engine + SSE, demo mode, public shares, seed, CI/CD.
-- **apps/ragent** — feature-complete (hybrid retrieval, ReAct agent + citations, SSE chat, live system-prompt fetch, async ingestion, demo cost caps). CI runs the full suite; `fly deploy` + prod smoke pending.
-- **apps/web** — Next.js 16 frontend, in progress (auth, prompts, evals + live SSE, dashboard done; ragent chat UI next).
+- **apps/ragent** — feature-complete and deployed (hybrid retrieval, ReAct agent + citations, SSE chat, live system-prompt fetch, async ingestion, demo cost caps).
+- **apps/web** — feature-complete and deployed on Vercel. BFF auth (JWE session), prompts + versioning, the eval engine with live SSE, RAG-agent chat, corpora + upload, settings (API keys + BYOK), public share pages, and a Playwright + MSW E2E suite.
 
 ## License
 
