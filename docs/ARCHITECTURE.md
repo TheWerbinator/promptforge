@@ -6,8 +6,8 @@
 
 ```
               ┌────────────────────────────────────────────────────┐
-              │  promptforge.vercel.app  (apps/web)                │
-              │  Next.js 15 + shadcn/ui + Tailwind                 │
+              │  thewerbinator-promptforge.vercel.app  (apps/web)           │
+              │  Next.js 16 (App Router) + Tailwind v4 · BFF       │
               └─────────────────┬──────────────────────────────────┘
                                 │ REST + SSE
                                 │ Bearer JWT or API key
@@ -71,9 +71,9 @@ Four corpora (3 seeded + user-uploadable). Per-corpus embedding model (OpenAI `t
 
 **Queue:** ragent shares apps/api's `jobs` table (migration 0004) rather than standing up its own — `kind="ingest_document"` for ingest, `kind="eval_case"` for api's eval worker, one table, two consumers filtered by kind. Requeue backoff is computed with the DB clock (`now() + make_interval`) so it's correct under host/container clock drift.
 
-### apps/web — Next.js frontend *(not started)*
+### apps/web — Next.js frontend *(feature-complete — deployed on Vercel)*
 
-Next.js 15 App Router · React 19 · TypeScript strict · Tailwind · shadcn/ui · Zustand (small UI stores) · openapi-typescript (API types codegen) · eventsource-parser (SSE) · monaco-editor (prompt body) · Vitest · Playwright · pnpm.
+Next.js 16 App Router · React 19 · TypeScript strict · Tailwind v4 (dark default) · openapi-typescript (API types codegen) · eventsource-parser (SSE) · @monaco-editor/react (prompt body, lazy) · react-hook-form + zod · npm. **A BFF (backend-for-frontend):** the browser only talks to the Next origin; route handlers (`app/api/*`) proxy to both `apps/api` and `apps/ragent`, and the session (API access + refresh tokens + profile) is sealed as a **JWE** in an httpOnly same-origin cookie — no API token ever reaches the browser. SSE (eval batches + agent chat) is piped through the proxy with buffering disabled. The BYOK provider key lives in its own sealed cookie, forwarded as `X-Provider-Key`. Tested end-to-end with **Playwright + in-process MSW** (the real BFF runs against a faked upstream — no live backend). Deployed via Vercel's native Next.js integration (root directory `apps/web`); runbook in [DEPLOY-WEB.md](DEPLOY-WEB.md).
 
 ## Data model (current)
 
@@ -125,8 +125,8 @@ Demo mode (phase 13): `POST /demo/login` issues a read-only JWT for the seeded `
 |---|---|
 | `apps/api` (api + worker processes) | Fly.io, region `ord`, shared-cpu-1x / 512MB each |
 | Postgres 17 + pgvector | Neon managed (AWS us-east-1), connected via direct (session-mode) endpoint |
-| Future: `apps/ragent` | Fly.io, same region |
-| Future: `apps/web` | Vercel |
+| `apps/ragent` (web + ingest-worker) | Fly.io, same region |
+| `apps/web` | Vercel (native Next.js, root directory `apps/web`) |
 
 Fly's `[deploy] release_command = "sh -c 'alembic upgrade head && python -m promptforge_api.seed'"` runs migrations then the idempotent demo seed on a temp machine before traffic shifts; failure aborts the deploy with old machines still serving.
 
