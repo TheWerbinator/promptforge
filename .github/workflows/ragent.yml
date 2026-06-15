@@ -114,4 +114,7 @@ jobs:
         # seed is a documented one-time manual step — see docs/DEPLOY.md).
         run: flyctl deploy --remote-only
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          # App-scoped deploy token for promptforge-ragent. The shared
+          # FLY_API_TOKEN is scoped to promptforge-api only, so it can't deploy
+          # this app (fly returns "unauthorized"). Each app gets its own token.
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_RAGENT }}
