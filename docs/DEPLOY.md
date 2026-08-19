@@ -77,7 +77,7 @@ APP="https://promptforge-api.fly.dev"
 
 # 1. Liveness + version
 curl -fsS $APP/health
-# 2. OpenAPI + docs reachable (visitors open /docs)
+# 2. OpenAPI + docs reachable
 curl -fsS -o /dev/null $APP/openapi.json && echo "openapi ok"
 curl -fsS -o /dev/null $APP/docs && echo "docs ok"
 

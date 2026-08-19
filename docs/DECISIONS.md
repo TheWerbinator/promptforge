@@ -32,9 +32,9 @@ RLS in Postgres is elegant but couples enforcement to the DB role. With async SQ
 
 Multi-provider with one client. Cost tracking, retries, function-calling normalization out of the box. Switching from gpt-4o-mini to claude-haiku-4-5 is a string change, not a refactor. Used widely in AI infra (LangServe, hosted gateways).
 
-## Why refresh tokens despite this project's scope?
+## Why refresh tokens at this scope?
 
-OWASP best practice for session management. Demonstrates rotation + chain revocation thinking — when a rotated refresh token is replayed, the entire chain is revoked. This is the design rationale: most small apps skip refresh entirely, then can't answer "how do you handle session compromise?"
+OWASP best practice for session management. Demonstrates rotation + chain revocation thinking — when a rotated refresh token is replayed, the entire chain is revoked. Most small apps skip refresh entirely and then have no answer for "how do you handle session compromise?"
 
 ## Why Postgres LISTEN/NOTIFY for SSE fanout?
 
@@ -150,7 +150,7 @@ A web-only change shouldn't run api tests and vice versa. CI minutes saved + fas
 
 ## Why dark mode default with no toggle?
 
-Demo UX: looks better in screenshots and on visitors' likely-dark IDEs. Toggle is a feature I'd add if real users requested. Design rationale is "make decisions; defer features without users to ask."
+Demo UX: looks better in screenshots and matches the dark IDEs most visitors arrive from. Toggle is a feature I'd add if real users requested it. Make the decision; defer features that have no users to ask.
 
 ---
 
@@ -180,7 +180,7 @@ I considered PromptRepository extending the base, but it would have been ~20 lin
 
 ## Why applicative (collect-all) validation instead of fail-fast?
 
-Fail-fast UX is hostile: user submits a form with 3 mistakes, gets told about #1, fixes it, submits again, gets told about #2, etc. Three round-trips. Applicative validation returns all 3 in one response. Pattern is canonical in functional-programming literature (Validation applicative vs Either monad). The module docstring calls this out explicitly because it's legible at the call site.
+Fail-fast UX is hostile: user submits a form with 3 mistakes, gets told about #1, fixes it, submits again, gets told about #2, etc. Three round-trips. Applicative validation returns all 3 in one response. Pattern is canonical in functional-programming literature (Validation applicative vs Either monad). The module docstring calls this out explicitly so the choice is legible at the call site.
 
 ## Why reject undeclared body variables at construction time?
 
@@ -198,7 +198,7 @@ Two templates differing only in declaration order should be identical for cachin
 
 ## Why retry / rate-limit / gather as internal modules, not tenacity + aiolimiter?
 
-Three reasons. (1) Combined size is ~100 lines — adopting two deps for that surface area is the wrong trade. (2) This module is the async-orchestration showcase of this repo; importing tenacity hides the muscle. (3) Pinning + tracking two more deps' CVEs is real maintenance cost for this project's scope. I'd adopt tenacity the moment retry policies grew into per-exception strategies or stop conditions.
+Three reasons. (1) Combined size is ~100 lines — adopting two deps for that surface area is the wrong trade. (2) The retry/backoff/bounded-gather behaviour is something this repo should show explicitly rather than delegate; importing tenacity hides it. (3) Pinning + tracking two more deps' CVEs is real maintenance cost at this scale. I'd adopt tenacity the moment retry policies grew into per-exception strategies or stop conditions.
 
 ## Why equal jitter instead of full jitter or no jitter?
 
@@ -292,7 +292,7 @@ So `TenantRepository[Run]` can scope by `org_id` directly without a 3-table join
 
 ## Why demo accounts must BYOK to run prompts?
 
-The hosted OpenAI/Anthropic key on the server pays per token. A read-only demo seeded for visitors running 10 evals against `gpt-4o` would rack up real cost. BYOK pushes that cost to the visitor: paste your own key, get a real run, no harm to us. The 403 with a clear `detail` string tells the demo UI exactly what header to add — no guesswork.
+The hosted OpenAI/Anthropic key on the server pays per token. A read-only public demo where visitors run 10 evals against `gpt-4o` would rack up real cost. BYOK pushes that cost to the visitor: paste your own key, get a real run, no harm to us. The 403 with a clear `detail` string tells the demo UI exactly what header to add — no guesswork.
 
 ## Why `_provider_response` stored but not returned?
 
@@ -312,7 +312,7 @@ Postgres's `NOTIFY` is a utility command, not DML — it bypasses the prepared-s
 
 Managed Postgres without the $38/month Fly MPG floor. Neon's free tier (0.5 GB, 100 CU-hr/month) covers demo-scale data with room to spare. pgvector is enabled by default so ragent retrieval has no extension-install friction. **Database branching** is the differentiator: I can branch the prod database for migration testing without standing up a staging copy — that's a real engineering capability, not just a cost decision. Trade is +10–30 ms cross-cloud latency vs same-region Fly Postgres; acceptable because every request path is dominated by ≥500 ms LLM calls, so the DB hop is noise.
 
-Fly's unmanaged Postgres (`fly postgres create`) is cheaper still but Fly explicitly tells you they don't support it — you own backups, point-in-time restore, upgrades, disk-full handling. For this project's infra that's the wrong place to take on operational risk. Supabase would also work but uses transaction-mode PgBouncer on its default port, which breaks asyncpg's prepared-statement cache; Neon exposes a direct (session-mode) endpoint without that footgun.
+Fly's unmanaged Postgres (`fly postgres create`) is cheaper still but Fly explicitly tells you they don't support it — you own backups, point-in-time restore, upgrades, disk-full handling. At this project's scale that's the wrong place to take on operational risk. Supabase would also work but uses transaction-mode PgBouncer on its default port, which breaks asyncpg's prepared-statement cache; Neon exposes a direct (session-mode) endpoint without that footgun.
 
 ## Why a DSN normalizer in `Settings` (not just "set the right env var")?
 
@@ -658,7 +658,7 @@ bge is an *asymmetric* retrieval model: per BAAI's guidance you prepend a short 
 
 ## Why a global daily cap instead of detecting/blocking VPNs?
 
-Per-IP limits are the obvious first move, but they're trivially defeated by rotating IPs — and that's exactly what a VPN gives an abuser. The instinct is then to *detect* VPNs and block them, but reliable proxy/VPN detection needs a paid IP-reputation service (IPQualityScore, MaxMind Anonymous-IP) or fronting everything with Cloudflare's WAF, it's an ongoing arms race (residential proxies evade it), and it can false-positive on legitimate privacy-conscious users. For a public demo that's the wrong amount of money and complexity. The cost we actually care about is the hosted-key bill, so we cap *that* directly: a **global** daily free-turn ceiling (one sentinel counter row) on top of the per-IP one. An attacker can rotate through a thousand IPs and still only consume the global pool, after which everyone falls through to BYOK — rotation buys them nothing. Per-IP keeps one casual visitor from draining the global pool for everyone; the global cap is the hard backstop. `free_turns_remaining` returns the *min* of the two.
+Per-IP limits are the obvious first move, but they're trivially defeated by rotating IPs — and that's exactly what a VPN gives an abuser. The instinct is then to *detect* VPNs and block them, but reliable proxy/VPN detection needs a paid IP-reputation service (IPQualityScore, MaxMind Anonymous-IP) or fronting everything with Cloudflare's WAF, it's an ongoing arms race (residential proxies evade it), and it can false-positive on legitimate privacy-conscious users. For a demo of this size that's the wrong amount of money and complexity. The cost we actually care about is the hosted-key bill, so we cap *that* directly: a **global** daily free-turn ceiling (one sentinel counter row) on top of the per-IP one. An attacker can rotate through a thousand IPs and still only consume the global pool, after which everyone falls through to BYOK — rotation buys them nothing. Per-IP keeps one casual visitor from draining the global pool for everyone; the global cap is the hard backstop. `free_turns_remaining` returns the *min* of the two.
 
 ## Why is the 402 raised before the SSE stream opens, and the turn recorded only on an answer?
 
@@ -722,7 +722,7 @@ The mock keeps a small in-memory store so a create→list→detail→delete flow
 
 ## Why skeletons over spinners, and why keep the landing a static server component?
 
-Two small choices with a defendable reason. Skeletons (placeholder blocks shaped like the content) instead of a centered "Loading…"/spinner because they preserve layout — no content-shift when data lands — and read as a finished product rather than a prototype; the cost is one ~10-line component reused everywhere a client page fetches. The landing is a pure server component with no client data fetching and a CSS-only backdrop, so it **prerenders to static HTML** at build — the fastest possible first paint for the page a visitor hits first (the acceptance bar was Lighthouse ≥85), and there's nothing dynamic on it to justify client JS. The interactive `Try the demo` button is the one island (`'use client'`), which is exactly the App Router pattern: static shell, minimal client islands.
+Two small choices with a defendable reason. Skeletons (placeholder blocks shaped like the content) instead of a centered "Loading…"/spinner because they preserve layout — no content-shift when data lands — and read as a finished product rather than a prototype; the cost is one ~10-line component reused everywhere a client page fetches. The landing is a pure server component with no client data fetching and a CSS-only backdrop, so it **prerenders to static HTML** at build — the fastest possible first paint for the page most visitors land on first (the acceptance bar was Lighthouse ≥85), and there's nothing dynamic on it to justify client JS. The interactive `Try the demo` button is the one island (`'use client'`), which is exactly the App Router pattern: static shell, minimal client islands.
 
 # Phase 15 (web) — Deploy
 

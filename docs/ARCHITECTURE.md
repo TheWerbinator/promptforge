@@ -52,7 +52,7 @@ Two processes share a single Docker image: `api` (uvicorn) and `worker` (queue c
 - `core/security.py` — JWT, argon2, API key hashing, refresh rotation w/ chain-revocation replay defense
 - `core/db.py` — lazy async engine, session factory, `get_session` dependency
 - `core/deps.py` — `Principal`, `get_principal`, `require_role`, `get_repo(Model)` factory
-- `core/prompts.py` — typed `PromptTemplate` w/ applicative `render()` and content-stable `fingerprint()` 
+- `core/prompts.py` — typed `PromptTemplate` w/ applicative `render()` and content-stable `fingerprint()`
 - `core/async_utils.py` — `retry` decorator, `TokenBucket` w/ injectable clock, `rate_limited`, `gather_bounded`
 - `core/queue.py` — *pending phase 8* — Postgres `SKIP LOCKED` queue + `LISTEN/NOTIFY` SSE fanout
 - `repositories/base.py` — `TenantRepository[T]` generic; mandatory `org_id` scope; optional composed-after `where` kwarg; cross-org returns None (404, not 403)
