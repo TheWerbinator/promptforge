@@ -186,5 +186,5 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-# Local working notes — build log and plan, not part of the published docs
-docs/DECISIONS.md
+# Local working notes — build log, not part of the published docs
+docs/PROGRESS.md
